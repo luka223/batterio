@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="Batterio.App.PopupPage"
+             Title="Batterio">
+    <Border Padding="14" StrokeShape="RoundRectangle 14" StrokeThickness="1">
+        <Grid RowDefinitions="Auto,Auto,*,Auto" RowSpacing="8">
+            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="4">
+                <Label Text="Batterio" FontSize="18" FontAttributes="Bold" VerticalOptions="Center" />
+                <Border Grid.Column="1" WidthRequest="36" HeightRequest="36" Padding="0"
+                        StrokeThickness="1" StrokeShape="RoundRectangle 11"
+                        Stroke="{AppThemeBinding Light=#E4E4E7, Dark=#3F3F46}"
+                        BackgroundColor="{AppThemeBinding Light=#F4F4F5, Dark=#27272A}">
+                    <Grid>
+                        <Label x:Name="RefreshIcon" Text="&#xE72C;" FontFamily="Segoe Fluent Icons" FontSize="16"
+                               HorizontalOptions="Center" VerticalOptions="Center"
+                               TextColor="{AppThemeBinding Light=#2563EB, Dark=#93C5FD}"
+                               InputTransparent="True" />
+                        <Button BackgroundColor="Transparent" BorderWidth="0" Padding="0"
+                                SemanticProperties.Description="Refresh all devices" ToolTipProperties.Text="Refresh all devices"
+                                Command="{Binding RefreshAllCommand}" />
+                    </Grid>
+                </Border>
+            </Grid>
+            <Label Grid.Row="1" Text="{Binding StartupError}" IsVisible="{Binding HasStartupError}"
+                   TextColor="#DC2626" FontSize="12" />
+            <CollectionView Grid.Row="2" ItemsSource="{Binding Devices}" SelectionMode="None">
+                <CollectionView.EmptyView>
+                    <Label Text="No devices available" HorizontalTextAlignment="Center" VerticalTextAlignment="Center" />
+                </CollectionView.EmptyView>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="0,10" ColumnDefinitions="56,*,Auto,Auto" ColumnSpacing="10"
+                              ToolTipProperties.Text="{Binding DetailText}">
+                            <Image Source="{Binding PhotoSource}" WidthRequest="52" HeightRequest="52"
+                                   HorizontalOptions="Center" VerticalOptions="Center" />
+                            <Label Grid.Column="1" Text="{Binding Name}" FontAttributes="Bold"
+                                   VerticalOptions="Center" />
+                            <Grid Grid.Column="2" WidthRequest="42" HeightRequest="18" IsVisible="{Binding HasReading}"
+                                  SemanticProperties.Description="{Binding BatteryDescription}">
+                                <Border WidthRequest="36" HeightRequest="18" Padding="2" HorizontalOptions="Start"
+                                        Stroke="{Binding BatteryColor}" StrokeThickness="2" StrokeShape="RoundRectangle 3">
+                                    <HorizontalStackLayout Spacing="0" BindableLayout.ItemsSource="{Binding BatterySegments}">
+                                        <BindableLayout.ItemTemplate>
+                                            <DataTemplate>
+                                                <Border WidthRequest="2.8" HeightRequest="10"
+                                                        BackgroundColor="{Binding Color}" StrokeThickness="0"
+                                                        StrokeShape="RoundRectangle 1" IsVisible="{Binding IsFilled}" />
+                                            </DataTemplate>
+                                        </BindableLayout.ItemTemplate>
+                                    </HorizontalStackLayout>
+                                </Border>
+                                <Border WidthRequest="3" HeightRequest="6" Margin="36,0,0,0"
+                                        HorizontalOptions="Start" VerticalOptions="Center"
+                                        BackgroundColor="{Binding BatteryColor}" StrokeThickness="0" StrokeShape="RoundRectangle 1" />
+                            </Grid>
+                            <Label Grid.Column="3" Text="{Binding StatusText}" FontSize="14"
+                                   FontAttributes="Bold" VerticalOptions="Center" />
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+            </CollectionView>
+            <Label Grid.Row="3" Text="Refreshes every 5 minutes" FontSize="11" Opacity="0.6" />
+        </Grid>
+    </Border>
+</ContentPage>

@@ -1,0 +1,5 @@
+<Project>
+  <Target Name="VerifyWindowsOnly" BeforeTargets="Build" Condition="'$(MSBuildProjectName)' == 'Batterio.App'">
+    <Error Condition="'$(TargetFramework)' != 'net10.0-windows10.0.19041.0'" Text="Batterio.App is Windows-only and must target net10.0-windows10.0.19041.0." />
+  </Target>
+</Project>

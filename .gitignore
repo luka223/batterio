@@ -1,0 +1,54 @@
+bin/
+obj/
+.vs/
+.templatehive/
+.maui-template/
+.dotnet-cli-home/
+.appdata/
+.localappdata/
+.manual-appdata/
+.manual-localappdata/
+.nuget/
+publish/
+*.user
+*.suo
+
+# IDE and editor state
+.idea/
+.vscode/*
+!.vscode/README.md
+*.userprefs
+*.sln.docstates
+
+# Build, test, and coverage output
+TestResults/
+test-results/
+coverage/
+*.trx
+*.coverage
+*.coveragexml
+*.nupkg
+*.snupkg
+artifacts/
+
+# Local application and developer configuration
+*.local.json
+appsettings.Development.json
+appsettings.Local.json
+*.secrets.json
+
+# Logs and diagnostic dumps
+*.log
+*.dmp
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.swp
+*~
