@@ -46,3 +46,11 @@ dotnet publish src/Batterio.App/Batterio.App.csproj -c Release -r win-x64 --self
 
 The publish folder contains the .NET runtime and Windows App SDK runtime and does not require the .NET SDK on the target machine.
 
+To publish Batterio as a single, self-contained executable, run:
+
+```powershell
+dotnet publish src/Batterio.App/Batterio.App.csproj -c Release -r win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:IncludeAllContentForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:PublishReadyToRun=false -o publish-single-file
+```
+
+Copy `publish-single-file/Batterio.App.exe` to the target Windows 11 x64 machine; no other published files are required. The executable uses `src/Batterio.App/Resources/AppIcon/batterio.ico` as its icon. Native components are extracted to a temporary directory when the application starts.
+
