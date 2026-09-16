@@ -29,6 +29,7 @@ internal static class Win32Native
     internal const uint WM_RBUTTONUP = 0x0205;
     internal const uint WM_CONTEXTMENU = 0x007B;
     internal const uint WM_POWERBROADCAST = 0x0218;
+    internal const uint WM_TIMER = 0x0113;
     internal const nuint PBT_APMRESUMEAUTOMATIC = 0x0012;
     internal const nuint PBT_APMRESUMESUSPEND = 0x0007;
     internal const uint WM_APP = 0x8000;
@@ -174,10 +175,16 @@ internal static class Win32Native
     [DllImport("user32.dll")]
     internal static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nuint SetTimer(nint window, nuint timerId, uint elapseMilliseconds, nint timerProcedure);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool KillTimer(nint window, nuint timerId);
+
     [DllImport("user32.dll")]
     internal static extern void PostQuitMessage(int exitCode);
 
-    [DllImport("user32.dll")]
+    [DllImport("user32.dll", SetLastError = true)]
     internal static extern int GetMessage(out Message message, nint window, uint minimum, uint maximum);
 
     [DllImport("user32.dll")]
@@ -213,7 +220,7 @@ internal static class Win32Native
     [DllImport("user32.dll")]
     internal static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo monitorInfo);
 
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern bool Shell_NotifyIcon(uint message, ref NotifyIconData data);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]

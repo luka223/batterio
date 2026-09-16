@@ -15,8 +15,13 @@ public sealed class BatteryApplication : IAsyncDisposable
     private readonly LowBatteryNotificationCoordinator _lowBatteryNotifications;
     private readonly IBatterioLog _log;
     private readonly ILogger<BatteryApplication> _logger;
-    private bool _started;
+    private readonly RuntimeStartupSequence _startup;
+    private IProcessTerminator _processTerminator = new EnvironmentProcessTerminator();
+    private BoundedCleanupProcessExit _boundedExit;
     private bool _isExiting;
+
+    public const int StartupFailureExitCode = 1;
+    private static readonly TimeSpan StartupFailureCleanupTimeout = TimeSpan.FromSeconds(3);
 
     public BatteryApplication(
         PollingCoordinator polling,
@@ -34,46 +39,39 @@ public sealed class BatteryApplication : IAsyncDisposable
         _windows = windows;
         _log = log;
         _logger = logger;
+        _boundedExit = new BoundedCleanupProcessExit(_processTerminator);
         ViewModel = new BatteryViewModel(_polling);
         _windows.SetViewModel(ViewModel);
         _tray.ActionRaised += OnTrayAction;
         _tray.SystemResumed += OnSystemResumed;
         _windows.MenuActionRequested += OnMenuAction;
+        _startup = new RuntimeStartupSequence(
+            _windows.HidePopup,
+            () => _tray.StartAsync(),
+            () => _lowBatteryNotifications.StartAsync(),
+            StartSelectionAndPollingAsync,
+            exception => _log.Log(BatterioLogLevel.Critical, "Batterio failed to start.", exception));
     }
 
     public BatteryViewModel ViewModel { get; }
 
     public bool IsExiting => _isExiting;
 
-    public async Task StartAsync()
-    {
-        if (_started)
-        {
-            _windows.HidePopup();
-            return;
-        }
+    public Task StartAsync() => _startup.StartAsync();
 
-        _started = true;
-        _windows.HidePopup();
-        try
-        {
-            await _tray.StartAsync().ConfigureAwait(false);
-            await _lowBatteryNotifications.StartAsync().ConfigureAwait(false);
-            await _selection.StartAsync().ConfigureAwait(false);
-            _logger.LogInformation("Batterio started with receiver discovery enabled.");
-        }
-        catch (Exception exception)
-        {
-            _log.Log(BatterioLogLevel.Critical, "Batterio failed to start.", exception);
-            await MainThread.InvokeOnMainThreadAsync(() =>
-            {
-                _windows.ReportStartupError(exception.Message);
-                _windows.ShowPopup();
-            });
-        }
+    internal void ConfigureProcessTerminator(IProcessTerminator processTerminator)
+    {
+        _processTerminator = processTerminator ?? throw new ArgumentNullException(nameof(processTerminator));
+        _boundedExit = new BoundedCleanupProcessExit(_processTerminator);
     }
 
-    public async Task ExitAsync()
+    private async Task StartSelectionAndPollingAsync()
+    {
+        await _selection.StartAsync().ConfigureAwait(false);
+        _logger.LogInformation("Batterio started with receiver discovery enabled.");
+    }
+
+    public async Task ExitAsync(int exitCode = 0)
     {
         if (_isExiting)
         {
@@ -83,22 +81,23 @@ public sealed class BatteryApplication : IAsyncDisposable
         _isExiting = true;
         WindowsToastActivation.Current.Stop();
         _log.Log(BatterioLogLevel.Information, "Exit requested.");
-        try
-        {
-            await _selection.StopAsync().ConfigureAwait(false);
-            await _lowBatteryNotifications.StopAsync().ConfigureAwait(false);
-            await _polling.StopAsync(TimeSpan.FromMilliseconds(750)).ConfigureAwait(false);
-            await _tray.StopAsync().ConfigureAwait(false);
-            await _windows.CloseAsync().ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            _log.Log(BatterioLogLevel.Error, "Shutdown cleanup encountered an error.", exception);
-        }
-        finally
-        {
-            Environment.Exit(0);
-        }
+        await _boundedExit.RunAsync(
+            CleanupAsync,
+            exitCode == StartupFailureExitCode ? StartupFailureCleanupTimeout : TimeSpan.FromSeconds(5),
+            exitCode,
+            exception => _log.Log(BatterioLogLevel.Warning,
+                "Application cleanup exceeded its bounded shutdown time.", exception),
+            exception => _log.Log(BatterioLogLevel.Error,
+                "Shutdown cleanup encountered an error.", exception)).ConfigureAwait(false);
+    }
+
+    private async Task CleanupAsync()
+    {
+        await _selection.StopAsync().ConfigureAwait(false);
+        await _lowBatteryNotifications.StopAsync().ConfigureAwait(false);
+        await _polling.StopAsync(TimeSpan.FromMilliseconds(750)).ConfigureAwait(false);
+        await _tray.StopAsync().ConfigureAwait(false);
+        await _windows.CloseAsync().ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()

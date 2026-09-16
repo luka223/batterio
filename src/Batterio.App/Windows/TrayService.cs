@@ -1,93 +1,155 @@
 using Batterio.Core;
 using Batterio.Core.Abstractions;
-using Windows.Win32;
-using System.Runtime.InteropServices;
 
 namespace Batterio.App.Windows;
 
-public sealed class WindowsDoubleClickTimeProvider : IDoubleClickTimeProvider
+internal enum TrayServiceLifecycleState
 {
-    public TimeSpan GetDoubleClickTime() => TimeSpan.FromMilliseconds(PInvoke.GetDoubleClickTime());
+    Idle,
+    Starting,
+    Ready,
+    Stopping,
+    Faulted,
+    Disposed
 }
 
 public sealed class TrayService : ITrayService
 {
-    private static readonly Guid TrayGuid = new("9D3B7E6E-5CB9-4A63-AE76-5CF12CDB8E4C");
+    private const nuint RetryTimerId = 1;
     private readonly IBatterioLog _log;
     private readonly TrayClickArbiter _clickArbiter;
-    private readonly TaskCompletionSource<bool> _loopCompleted = new(TaskCreationOptions.RunContinuationsAsynchronously);
-    private readonly TaskCompletionSource<bool> _ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly ITrayNativePlatform _platform;
+    private readonly TimeProvider _timeProvider;
     private readonly object _gate = new();
-    private readonly Win32Native.WindowProcedure _windowProcedure;
-    private Thread? _thread;
-    private nint _window;
-    private nint _instance;
-    private nint _icon;
-    private ushort _classAtom;
-    private uint _taskbarCreatedMessage;
-    private bool _iconAdded;
-    private bool _version4;
-    private bool _started;
+    private readonly TaskCompletionSource<bool> _disposed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private TrayRunState? _currentRun;
+    private TrayServiceLifecycleState _state = TrayServiceLifecycleState.Idle;
+    private int _disposeRequested;
 
     public TrayService(IBatterioLog log)
+        : this(
+            log,
+            new WindowsTrayNativePlatform(),
+            TimeProvider.System,
+            new SystemClickDelay(),
+            new WindowsDoubleClickTimeProvider())
     {
-        _log = log;
-        _clickArbiter = new TrayClickArbiter(new SystemClickDelay(), new WindowsDoubleClickTimeProvider());
+    }
+
+    internal TrayService(
+        IBatterioLog log,
+        ITrayNativePlatform platform,
+        TimeProvider? timeProvider = null,
+        IClickDelay? clickDelay = null,
+        IDoubleClickTimeProvider? doubleClickTimeProvider = null)
+    {
+        _log = log ?? throw new ArgumentNullException(nameof(log));
+        _platform = platform ?? throw new ArgumentNullException(nameof(platform));
+        _timeProvider = timeProvider ?? TimeProvider.System;
+        _clickArbiter = new TrayClickArbiter(
+            clickDelay ?? new SystemClickDelay(),
+            doubleClickTimeProvider ?? new WindowsDoubleClickTimeProvider());
         _clickArbiter.ActionRaised += (_, action) => ActionRaised?.Invoke(this, action);
-        _windowProcedure = WindowProcedure;
     }
 
     public event EventHandler<TrayAction>? ActionRaised;
 
     public event EventHandler? SystemResumed;
 
-    public async Task StartAsync(CancellationToken cancellationToken = default)
+    internal TrayServiceLifecycleState LifecycleState
     {
+        get
+        {
+            lock (_gate)
+            {
+                return _state;
+            }
+        }
+    }
+
+    public Task StartAsync(CancellationToken cancellationToken = default)
+    {
+        TrayRunState? restartAfter = null;
+        Task? readiness = null;
+
         lock (_gate)
         {
-            if (_started)
-            {
-                return;
-            }
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeRequested) != 0, this);
 
-            _started = true;
-            _thread = new Thread(MessageLoop)
+            if (_currentRun is { } currentRun)
             {
-                IsBackground = true,
-                Name = "Batterio tray window"
-            };
-            _thread.Start();
+                if (_state is TrayServiceLifecycleState.Stopping or TrayServiceLifecycleState.Faulted)
+                {
+                    restartAfter = currentRun;
+                }
+                else
+                {
+                    return WaitForReadiness(currentRun.Ready.Task, cancellationToken);
+                }
+            }
+            else
+            {
+                var newRun = new TrayRunState(_timeProvider);
+                newRun.Thread = new Thread(() => MessageLoop(newRun))
+                {
+                    IsBackground = true,
+                    Name = "Batterio tray window"
+                };
+                newRun.ClassName = $"Batterio.Tray.{Environment.ProcessId}.{Guid.NewGuid():N}";
+                _currentRun = newRun;
+                _state = TrayServiceLifecycleState.Starting;
+
+                try
+                {
+                    newRun.Thread.Start();
+                }
+                catch (Exception exception)
+                {
+                    _currentRun = null;
+                    _state = TrayServiceLifecycleState.Idle;
+                    newRun.Ready.TrySetException(exception);
+                    newRun.Completion.TrySetResult(true);
+                    newRun.Detached.TrySetResult(true);
+                }
+
+                readiness = newRun.Ready.Task;
+            }
         }
 
-        await _ready.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        if (restartAfter is not null)
+        {
+            return StartAfterRunDetachesAsync(restartAfter, cancellationToken);
+        }
+
+        return WaitForReadiness(readiness!, cancellationToken);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
     {
+        TrayRunState? run;
         nint window;
+        bool shouldPostClose;
         lock (_gate)
         {
-            if (!_started)
+            run = _currentRun;
+            if (run is null)
             {
                 return;
             }
 
-            window = _window;
+            _state = TrayServiceLifecycleState.Stopping;
+
+            run.RequestStop();
+            window = run.Window;
+            shouldPostClose = window != 0;
         }
 
-        if (window != 0)
+        if (shouldPostClose)
         {
-            Win32Native.PostMessage(window, Win32Native.WM_CLOSE, 0, 0);
+            PostCloseIfNeeded(run!, window);
         }
 
-        try
-        {
-            await _loopCompleted.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception) when (exception is InvalidOperationException or OperationCanceledException)
-        {
-            _log.Log(BatterioLogLevel.Warning, "Tray service stopped with a prior initialization failure.", exception);
-        }
+        await run!.Completion.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public TrayIconPlacement? GetIconPlacement()
@@ -95,280 +157,526 @@ public sealed class TrayService : ITrayService
         nint window;
         lock (_gate)
         {
-            window = _window;
+            var run = _currentRun;
+            if (run is null || !run.IconAdded)
+            {
+                return null;
+            }
+
+            window = run.Window;
         }
 
-        if (window == 0 || !_iconAdded)
-        {
-            return null;
-        }
-
-        var identifier = new Win32Native.NotifyIconIdentifier
-        {
-            Size = (uint)Marshal.SizeOf<Win32Native.NotifyIconIdentifier>(),
-            Window = window,
-            Id = 1,
-            GuidItem = TrayGuid
-        };
-        if (Win32Native.Shell_NotifyIconGetRect(ref identifier, out var rect) != 0)
-        {
-            return GetFallbackPlacement();
-        }
-
-        return CreatePlacement(rect);
+        return window == 0 ? null : _platform.GetIconPlacement(window);
     }
 
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
     {
-        await StopAsync().ConfigureAwait(false);
-        await _clickArbiter.DisposeAsync().ConfigureAwait(false);
+        if (Interlocked.Exchange(ref _disposeRequested, 1) == 0)
+        {
+            _ = DisposeCoreAsync();
+        }
+
+        return new ValueTask(_disposed.Task);
     }
 
-    private void MessageLoop()
+    private async Task DisposeCoreAsync()
     {
         try
         {
-            _instance = Win32Native.GetModuleHandle(null);
-            _icon = Win32Native.LoadImage(0, Path.Combine(AppContext.BaseDirectory, "batterio.ico"), 1, 0, 0, 0x10 | 0x40);
-            if (_icon == 0)
+            await StopAsync().ConfigureAwait(false);
+            await _clickArbiter.DisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Warning, "Tray service disposal encountered an error.", exception);
+        }
+        finally
+        {
+            lock (_gate)
             {
-                throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Could not load the Batterio icon.");
+                if (_currentRun is null)
+                {
+                    _state = TrayServiceLifecycleState.Disposed;
+                }
             }
-            var className = $"Batterio.Tray.{Environment.ProcessId}";
-            var windowClass = new Win32Native.WindowClass
+
+            _disposed.TrySetResult(true);
+        }
+    }
+
+    private Task StartAfterRunDetachesAsync(TrayRunState run, CancellationToken cancellationToken) =>
+        StartAfterRunDetachesCoreAsync(run, cancellationToken);
+
+    private async Task StartAfterRunDetachesCoreAsync(TrayRunState run, CancellationToken cancellationToken)
+    {
+        await run.Detached.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    private static Task WaitForReadiness(Task readiness, CancellationToken cancellationToken) =>
+        cancellationToken.CanBeCanceled ? readiness.WaitAsync(cancellationToken) : readiness;
+
+    private void MessageLoop(TrayRunState run)
+    {
+        try
+        {
+            run.Instance = _platform.GetModuleHandle();
+            if (run.Instance == 0)
             {
-                Size = (uint)Marshal.SizeOf<Win32Native.WindowClass>(),
-                Instance = _instance,
-                WindowProcedure = _windowProcedure,
-                ClassName = className,
-                Icon = _icon,
-                SmallIcon = _icon
-            };
-            _classAtom = Win32Native.RegisterClassEx(ref windowClass);
-            if (_classAtom == 0)
+                throw new InvalidOperationException("Windows could not resolve the Batterio module handle.");
+            }
+
+            run.Icon = _platform.LoadIcon(Path.Combine(AppContext.BaseDirectory, "batterio.ico"));
+            if (run.Icon == 0)
+            {
+                throw new InvalidOperationException("Could not load the Batterio icon.");
+            }
+
+            run.TaskbarCreatedMessage = _platform.RegisterTaskbarCreatedMessage();
+            if (run.TaskbarCreatedMessage == 0)
+            {
+                throw new InvalidOperationException("Windows could not register the TaskbarCreated message.");
+            }
+
+            run.WindowProcedure = (window, message) => HandleWindowMessage(run, window, message);
+            run.ClassAtom = _platform.RegisterWindowClass(
+                run.ClassName,
+                run.Instance,
+                run.Icon,
+                run.TaskbarCreatedMessage,
+                run.WindowProcedure);
+            if (run.ClassAtom == 0)
             {
                 throw new InvalidOperationException("Windows could not register the tray callback window class.");
             }
 
-            _taskbarCreatedMessage = Win32Native.RegisterWindowMessage("TaskbarCreated");
-            _window = Win32Native.CreateWindowEx(
-                Win32Native.WS_EX_TOOLWINDOW | Win32Native.WS_EX_NOACTIVATE,
-                className,
-                "Batterio tray callback",
-                Win32Native.WS_POPUP,
-                0,
-                0,
-                0,
-                0,
-                0,
-                0,
-                _instance,
-                0);
-            if (_window == 0)
+            var window = _platform.CreateCallbackWindow(run.ClassName, run.Instance);
+            if (window == 0)
             {
                 throw new InvalidOperationException("Windows could not create the tray callback window.");
             }
-
-            if (!AddIcon())
+            lock (_gate)
             {
-                throw new InvalidOperationException("Windows could not register the Batterio tray icon.");
+                run.Window = window;
             }
 
-            _ready.TrySetResult(true);
-            while (Win32Native.GetMessage(out var message, 0, 0, 0) > 0)
+            if (run.StopRequested)
             {
-                Win32Native.TranslateMessage(ref message);
-                Win32Native.DispatchMessage(ref message);
+                run.Ready.TrySetCanceled();
+                PostCloseIfNeeded(run, window);
+            }
+            else if (TryAddIcon(run))
+            {
+                CompleteIconReadiness(run);
+            }
+            else
+            {
+                ScheduleIconRetry(run);
+            }
+
+            while (true)
+            {
+                var result = _platform.GetMessage(out var message);
+                if (result == -1)
+                {
+                    throw new InvalidOperationException("The tray message loop could not retrieve a Windows message.");
+                }
+
+                if (result == 0)
+                {
+                    break;
+                }
+
+                _platform.TranslateMessage(message);
+                _platform.DispatchMessage(message);
+                if (run.FatalException is { } fatalException)
+                {
+                    throw fatalException;
+                }
             }
         }
         catch (Exception exception)
         {
-            _log.Log(BatterioLogLevel.Critical, "Tray service failed to initialize.", exception);
-            _ready.TrySetException(exception);
-            _loopCompleted.TrySetException(exception);
+            run.Failure = run.FatalException ?? exception;
+            _log.Log(BatterioLogLevel.Critical, "Tray service failed to initialize or run.", run.Failure);
+            lock (_gate)
+            {
+                if (ReferenceEquals(_currentRun, run) && Volatile.Read(ref _disposeRequested) == 0)
+                {
+                    _state = TrayServiceLifecycleState.Faulted;
+                }
+            }
         }
         finally
         {
-            if (_classAtom != 0)
+            CleanupNativeResources(run);
+
+            if (!run.Ready.Task.IsCompleted)
             {
-                Win32Native.UnregisterClass($"Batterio.Tray.{Environment.ProcessId}", _instance);
+                if (run.Failure is not null)
+                {
+                    run.Ready.TrySetException(run.Failure);
+                }
+                else if (run.StopRequested)
+                {
+                    run.Ready.TrySetCanceled();
+                }
+                else
+                {
+                    run.Ready.TrySetException(
+                        new InvalidOperationException("The tray service stopped before the icon became ready."));
+                }
             }
+
+            run.Completion.TrySetResult(true);
 
             lock (_gate)
             {
-                _window = 0;
+                if (ReferenceEquals(_currentRun, run))
+                {
+                    _currentRun = null;
+                    _state = Volatile.Read(ref _disposeRequested) != 0
+                        ? TrayServiceLifecycleState.Disposed
+                        : TrayServiceLifecycleState.Idle;
+                }
             }
 
-            if (_icon != 0)
-            {
-                Win32Native.DestroyIcon(_icon);
-                _icon = 0;
-            }
-
-            _loopCompleted.TrySetResult(true);
+            run.Detached.TrySetResult(true);
         }
     }
 
-    private nint WindowProcedure(nint window, uint message, nuint wParam, nint lParam)
+    private void CleanupNativeResources(TrayRunState run)
     {
-        if (message == _taskbarCreatedMessage)
-        {
-            RestoreIcon();
-            return 0;
-        }
+        TryCleanup(() => CancelRetryTimer(run), "Could not cancel the tray icon retry timer during cleanup.");
+        TryCleanup(() => RemoveIcon(run), "Could not remove the tray icon during cleanup.");
 
-        if (message == TrayCallbackMessage)
+        var window = run.Window;
+        if (window != 0)
         {
-            // Version 4 packs the icon ID into the high word of lParam.
-            switch ((uint)(lParam.ToInt64() & 0xffff))
+            TryCleanup(() => _platform.DestroyWindow(window), "Could not destroy the tray callback window.");
+            lock (_gate)
             {
-                case Win32Native.WM_LBUTTONUP:
-                    _ = _clickArbiter.HandleAsync(TrayNotification.LeftButtonUp);
-                    return 0;
-                case Win32Native.WM_LBUTTONDBLCLK:
-                    _ = _clickArbiter.HandleAsync(TrayNotification.LeftButtonDoubleClick);
-                    return 0;
-                case Win32Native.WM_RBUTTONUP:
-                    if (_version4)
-                    {
-                        // Version 4 sends WM_CONTEXTMENU for this same gesture.
-                        return 0;
-                    }
-                    _ = _clickArbiter.HandleAsync(TrayNotification.RightButtonUp);
-                    return 0;
-                case Win32Native.WM_CONTEXTMENU:
-                    _ = _clickArbiter.HandleAsync(TrayNotification.RightButtonUp);
-                    return 0;
-                case Win32Native.NIN_SELECT:
-                    // Mouse activation also sends WM_LBUTTONUP; arbitrate it only once.
-                    return 0;
-                case Win32Native.NIN_KEYSELECT:
-                    _ = _clickArbiter.HandleAsync(TrayNotification.KeyboardActivate);
-                    return 0;
+                run.Window = 0;
             }
         }
 
-        if (message == Win32Native.WM_POWERBROADCAST &&
-            (wParam == Win32Native.PBT_APMRESUMEAUTOMATIC || wParam == Win32Native.PBT_APMRESUMESUSPEND))
+        if (run.ClassAtom != 0)
         {
-            SystemResumed?.Invoke(this, EventArgs.Empty);
-            return 1;
+            TryCleanup(() => _platform.UnregisterWindowClass(run.ClassName, run.Instance), "Could not unregister the tray callback window class.");
+            run.ClassAtom = 0;
         }
 
-        if (message == Win32Native.WM_CLOSE)
+        if (run.Icon != 0)
         {
-            Win32Native.DestroyWindow(window);
-            return 0;
+            TryCleanup(() => _platform.DestroyIcon(run.Icon), "Could not destroy the loaded tray icon.");
+            run.Icon = 0;
         }
-
-        if (message == Win32Native.WM_DESTROY)
-        {
-            RemoveIcon();
-            Win32Native.PostQuitMessage(0);
-            return 0;
-        }
-
-        return Win32Native.DefWindowProc(window, message, wParam, lParam);
     }
 
-    private const uint TrayCallbackMessage = Win32Native.WM_APP + 1;
-
-    private bool AddIcon()
+    private void TryCleanup(Func<bool> cleanup, string message)
     {
-        var data = CreateNotifyIconData();
-        if (!Win32Native.Shell_NotifyIcon(Win32Native.NIM_ADD, ref data))
+        try
+        {
+            if (!cleanup())
+            {
+                _log.Log(BatterioLogLevel.Warning, message);
+            }
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Warning, message, exception);
+        }
+    }
+
+    private void TryCleanup(Action cleanup, string message)
+    {
+        try
+        {
+            cleanup();
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Warning, message, exception);
+        }
+    }
+
+    private bool TryAddIcon(TrayRunState run)
+    {
+        if (run.IconAdded)
+        {
+            return true;
+        }
+
+        if (!_platform.TryAddIcon(run.Window, run.Icon, out var version4))
         {
             return false;
         }
 
-        data.TimeoutOrVersion = Win32Native.NOTIFYICON_VERSION_4;
-        _version4 = Win32Native.Shell_NotifyIcon(Win32Native.NIM_SETVERSION, ref data);
-        if (!_version4)
+        run.IconAdded = true;
+        run.Version4 = version4;
+        if (!version4)
         {
             _log.Log(BatterioLogLevel.Warning, "Tray icon was added but notification version 4 could not be selected.");
         }
 
-        _iconAdded = true;
         return true;
     }
 
-    private void RestoreIcon()
+    private void RetryIconRegistration(TrayRunState run)
     {
-        if (_iconAdded)
-        {
-            RemoveIcon();
-        }
-
-        if (!AddIcon())
-        {
-            _log.Log(BatterioLogLevel.Error, "Explorer restarted, but the tray icon could not be restored.");
-        }
-    }
-
-    private void RemoveIcon()
-    {
-        if (!_iconAdded || _window == 0)
+        CancelRetryTimer(run);
+        if (run.IconAdded)
         {
             return;
         }
 
-        var data = CreateNotifyIconData();
-        Win32Native.Shell_NotifyIcon(Win32Native.NIM_DELETE, ref data);
-        _iconAdded = false;
+        if (TryAddIcon(run))
+        {
+            CompleteIconReadiness(run);
+        }
+        else
+        {
+            ScheduleIconRetry(run);
+        }
     }
 
-    private Win32Native.NotifyIconData CreateNotifyIconData() => new()
+    private void RestoreIcon(TrayRunState run)
     {
-        Size = (uint)Marshal.SizeOf<Win32Native.NotifyIconData>(),
-        Window = _window,
-        Id = 1,
-        Flags = Win32Native.NIF_MESSAGE | Win32Native.NIF_ICON | Win32Native.NIF_TIP | Win32Native.NIF_GUID,
-        CallbackMessage = TrayCallbackMessage,
-        Icon = _icon,
-        Tip = "Batterio",
-        Info = string.Empty,
-        InfoTitle = string.Empty,
-        GuidItem = TrayGuid
-    };
-
-    private TrayIconPlacement? CreatePlacement(Win32Native.Rect iconRect)
-    {
-        var monitor = Win32Native.MonitorFromRect(ref iconRect, Win32Native.MONITOR_DEFAULTTONEAREST);
-        var monitorInfo = new Win32Native.MonitorInfo
+        CancelRetryTimer(run);
+        run.RetryController.Reset();
+        run.RetryController.ResetFailureWarning();
+        run.RetryAttempts = 0;
+        run.RetryStartedAt = null;
+        if (run.IconAdded)
         {
-            Size = (uint)Marshal.SizeOf<Win32Native.MonitorInfo>()
-        };
-        if (monitor == 0 || !Win32Native.GetMonitorInfo(monitor, ref monitorInfo))
-        {
-            return null;
+            RemoveIcon(run);
         }
 
-        return new TrayIconPlacement(
-            iconRect.Left,
-            iconRect.Top,
-            iconRect.Right,
-            iconRect.Bottom,
-            monitorInfo.Work.Left,
-            monitorInfo.Work.Top,
-            monitorInfo.Work.Right,
-            monitorInfo.Work.Bottom);
+        if (TryAddIcon(run))
+        {
+            CompleteIconReadiness(run);
+        }
+        else
+        {
+            ScheduleIconRetry(run);
+        }
     }
 
-    private TrayIconPlacement? GetFallbackPlacement()
+    private void ScheduleIconRetry(TrayRunState run)
     {
-        if (!Win32Native.GetCursorPos(out var point))
+        if (run.RetryAttempts == 0)
         {
-            return null;
+            run.RetryStartedAt = _timeProvider.GetUtcNow();
         }
 
-        var rect = new Win32Native.Rect
+        var delay = run.RetryController.RecordFailure();
+        var milliseconds = checked((uint)Math.Clamp(delay.TotalMilliseconds, 1, uint.MaxValue));
+        if (_platform.StartRetryTimer(run.Window, RetryTimerId, milliseconds) == 0)
         {
-            Left = point.X,
-            Top = point.Y,
-            Right = point.X + 1,
-            Bottom = point.Y + 1
-        };
-        return CreatePlacement(rect);
+            throw new InvalidOperationException("Windows could not create the tray icon retry timer.");
+        }
+
+        run.RetryController.MarkRetryScheduled();
+        run.RetryTimerActive = true;
+        run.RetryAttempts++;
+
+        if (run.RetryController.ShouldLogFailure())
+        {
+            var level = run.RetryAttempts == 1 ? BatterioLogLevel.Error : BatterioLogLevel.Warning;
+            _log.Log(level, $"Tray icon registration is unavailable; retry attempt {run.RetryAttempts} is scheduled.");
+        }
+    }
+
+    private void CompleteIconReadiness(TrayRunState run)
+    {
+        if (run.StopRequested)
+        {
+            return;
+        }
+
+        if (run.RetryAttempts > 0)
+        {
+            var elapsed = run.RetryStartedAt.HasValue
+                ? _timeProvider.GetUtcNow() - run.RetryStartedAt.Value
+                : TimeSpan.Zero;
+            _log.Log(BatterioLogLevel.Information,
+                $"Tray icon registration recovered after {run.RetryAttempts} attempts in {elapsed.TotalSeconds:F1}s.");
+        }
+
+        run.RetryController.Reset();
+        run.RetryController.ResetFailureWarning();
+        run.RetryAttempts = 0;
+        run.RetryStartedAt = null;
+        if (!run.Ready.TrySetResult(true))
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            if (ReferenceEquals(_currentRun, run) && _state == TrayServiceLifecycleState.Starting)
+            {
+                _state = TrayServiceLifecycleState.Ready;
+            }
+        }
+    }
+
+    private void CancelRetryTimer(TrayRunState run)
+    {
+        if (!run.RetryTimerActive)
+        {
+            return;
+        }
+
+        run.RetryTimerActive = false;
+        run.RetryController.CancelRetry();
+        if (run.Window != 0)
+        {
+            _ = _platform.CancelRetryTimer(run.Window, RetryTimerId);
+        }
+    }
+
+    private void RemoveIcon(TrayRunState run)
+    {
+        if (!run.IconAdded || run.Window == 0)
+        {
+            return;
+        }
+
+        var removed = _platform.DeleteIcon(run.Window);
+        run.IconAdded = false;
+        run.Version4 = false;
+        if (!removed)
+        {
+            _log.Log(BatterioLogLevel.Warning, "Windows did not confirm tray icon removal.");
+        }
+    }
+
+    private nint HandleWindowMessage(TrayRunState run, nint window, TrayWindowEvent message)
+    {
+        try
+        {
+            switch (message.Kind)
+            {
+                case TrayWindowEventKind.TaskbarCreated:
+                    RestoreIcon(run);
+                    return 0;
+                case TrayWindowEventKind.RetryTimer:
+                    RetryIconRegistration(run);
+                    return 0;
+                case TrayWindowEventKind.Close:
+                    run.RequestStop();
+                    _platform.PostQuitMessage(0);
+                    return 0;
+                case TrayWindowEventKind.Destroy:
+                    _platform.PostQuitMessage(0);
+                    return 0;
+                case TrayWindowEventKind.LeftButtonUp:
+                case TrayWindowEventKind.LeftButtonDoubleClick:
+                case TrayWindowEventKind.RightButtonUp:
+                case TrayWindowEventKind.ContextMenu:
+                case TrayWindowEventKind.KeyboardActivate:
+                    HandleTrayCallback(run, message);
+                    return 0;
+                case TrayWindowEventKind.SystemResumed:
+                    SystemResumed?.Invoke(this, EventArgs.Empty);
+                    return 1;
+                default:
+                    return 0;
+            }
+        }
+        catch (Exception exception)
+        {
+            run.FatalException ??= exception;
+            try
+            {
+                _platform.PostQuitMessage(0);
+            }
+            catch
+            {
+                // The message loop will still observe a later native failure if quit posting failed.
+            }
+
+            return 0;
+        }
+    }
+
+    private void HandleTrayCallback(TrayRunState run, TrayWindowEvent message)
+    {
+        switch (message.Kind)
+        {
+            case TrayWindowEventKind.LeftButtonUp:
+                _ = _clickArbiter.HandleAsync(TrayNotification.LeftButtonUp);
+                break;
+            case TrayWindowEventKind.LeftButtonDoubleClick:
+                _ = _clickArbiter.HandleAsync(TrayNotification.LeftButtonDoubleClick);
+                break;
+            case TrayWindowEventKind.RightButtonUp when !run.Version4:
+                _ = _clickArbiter.HandleAsync(TrayNotification.RightButtonUp);
+                break;
+            case TrayWindowEventKind.ContextMenu:
+                _ = _clickArbiter.HandleAsync(TrayNotification.RightButtonUp);
+                break;
+            case TrayWindowEventKind.KeyboardActivate:
+                _ = _clickArbiter.HandleAsync(TrayNotification.KeyboardActivate);
+                break;
+        }
+    }
+
+    private void PostCloseIfNeeded(TrayRunState run, nint window)
+    {
+        if (!run.TryMarkClosePosted())
+        {
+            return;
+        }
+
+        try
+        {
+            if (!_platform.PostClose(window))
+            {
+                run.ResetClosePosted();
+                _log.Log(BatterioLogLevel.Warning, "Windows did not accept the tray shutdown message.");
+            }
+        }
+        catch (Exception exception)
+        {
+            run.ResetClosePosted();
+            _log.Log(BatterioLogLevel.Warning, "Could not post the tray shutdown message.", exception);
+        }
+    }
+
+    private sealed class TrayRunState(TimeProvider timeProvider)
+    {
+        private int _stopRequested;
+        private int _closePosted;
+
+        public readonly TaskCompletionSource<bool> Ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<bool> Completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<bool> Detached = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TrayIconRetryController RetryController = new(timeProvider);
+
+        public Thread Thread = null!;
+        public string ClassName = string.Empty;
+        public TrayNativeWindowProcedure? WindowProcedure;
+        public nint Instance;
+        public nint Icon;
+        public nint Window;
+        public ushort ClassAtom;
+        public uint TaskbarCreatedMessage;
+        public volatile bool IconAdded;
+        public bool Version4;
+        public bool RetryTimerActive;
+        public int RetryAttempts;
+        public DateTimeOffset? RetryStartedAt;
+        public Exception? Failure;
+        public Exception? FatalException;
+
+        public bool StopRequested => Volatile.Read(ref _stopRequested) != 0;
+
+        public void RequestStop() => Interlocked.Exchange(ref _stopRequested, 1);
+
+        public bool TryMarkClosePosted() => Interlocked.CompareExchange(ref _closePosted, 1, 0) == 0;
+
+        public void ResetClosePosted() => Interlocked.Exchange(ref _closePosted, 0);
     }
 }
-

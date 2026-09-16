@@ -58,17 +58,21 @@ public sealed class WindowsStartupRegistrationService : IStartupRegistrationServ
     public const int MaximumRunCommandLength = 260;
 
     private readonly IStartupRegistry _registry;
-    private readonly Func<string?> _processPathProvider;
+    private readonly Func<string?>? _processPathProvider;
     private readonly Func<string, bool> _fileExists;
-
+    private readonly bool _useInstalledResolver;
+    private readonly Func<InstalledExecutablePaths>? _installedPathsProvider;
     public WindowsStartupRegistrationService(
         IStartupRegistry? registry = null,
         Func<string?>? processPathProvider = null,
-        Func<string, bool>? fileExists = null)
+        Func<string, bool>? fileExists = null,
+        Func<InstalledExecutablePaths>? installedPathsProvider = null)
     {
         _registry = registry ?? new WindowsStartupRegistry();
-        _processPathProvider = processPathProvider ?? (() => Environment.ProcessPath);
+        _processPathProvider = processPathProvider;
         _fileExists = fileExists ?? File.Exists;
+        _useInstalledResolver = processPathProvider is null;
+        _installedPathsProvider = installedPathsProvider;
     }
 
     public Task<bool> IsRegisteredAsync(CancellationToken cancellationToken = default)
@@ -127,7 +131,9 @@ public sealed class WindowsStartupRegistrationService : IStartupRegistrationServ
 
     private string ResolveStartupCommand()
     {
-        var path = _processPathProvider();
+        var path = _useInstalledResolver
+            ? (_installedPathsProvider?.Invoke() ?? InstalledExecutableResolver.Resolve(fileExists: _fileExists)).LauncherPath
+            : _processPathProvider!();
         if (string.IsNullOrWhiteSpace(path))
         {
             throw new InvalidOperationException("Windows startup registration requires a resolved executable path.");

@@ -1,6 +1,11 @@
+using Batterio.Core.Startup;
+
 namespace Batterio.App.Windows;
 
-public sealed record ToastShortcutRegistration(string ExecutablePath, string AppUserModelId, Guid ActivatorId);
+public sealed record ToastShortcutRegistration(string ExecutablePath, string AppUserModelId, Guid ActivatorId)
+{
+    public string Arguments { get; init; } = StartupConstants.ToastActivationArgument;
+}
 
 /// <summary>Native operations kept behind a seam for hardware-independent verification.</summary>
 public interface IWindowsToastPlatform

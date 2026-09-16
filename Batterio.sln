@@ -11,6 +11,12 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.Core.Tests", "test
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.Windows.Tests", "tests\Batterio.Windows.Tests\Batterio.Windows.Tests.csproj", "{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A004}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.Startup", "src\Batterio.Startup\Batterio.Startup.csproj", "{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A005}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.Startup.Tests", "tests\Batterio.Startup.Tests\Batterio.Startup.Tests.csproj", "{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A006}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.StartupProbe", "tests\Batterio.StartupProbe\Batterio.StartupProbe.csproj", "{BFEE8FC2-180A-49AD-B833-0A6357BC2AB2}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -33,5 +39,17 @@ Global
 		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A003}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A003}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A003}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A005}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A005}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A005}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A005}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A006}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A006}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A006}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A006}.Release|Any CPU.Build.0 = Release|Any CPU
+		{BFEE8FC2-180A-49AD-B833-0A6357BC2AB2}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{BFEE8FC2-180A-49AD-B833-0A6357BC2AB2}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{BFEE8FC2-180A-49AD-B833-0A6357BC2AB2}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{BFEE8FC2-180A-49AD-B833-0A6357BC2AB2}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

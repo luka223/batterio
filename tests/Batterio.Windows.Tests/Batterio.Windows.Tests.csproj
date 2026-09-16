@@ -10,6 +10,15 @@
     <Compile Include="../../src/Batterio.App/Windows/IWindowsToastPlatform.cs" Link="Windows/IWindowsToastPlatform.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsToastPlatform.cs" Link="Windows/WindowsToastPlatform.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsToastComServer.cs" Link="Windows/WindowsToastComServer.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/StartupReadiness.cs" Link="Windows/StartupReadiness.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/ITrayNativePlatform.cs" Link="Windows/ITrayNativePlatform.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/TrayIconRetryController.cs" Link="Windows/TrayIconRetryController.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/TrayService.cs" Link="Windows/TrayService.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/WindowsTrayNativePlatform.cs" Link="Windows/WindowsTrayNativePlatform.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/Win32Native.cs" Link="Windows/Win32Native.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/RuntimeStartupSequence.cs" Link="Windows/RuntimeStartupSequence.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/RuntimeStartupCompletionCoordinator.cs" Link="Windows/RuntimeStartupCompletionCoordinator.cs" />
+    <ProjectReference Include="..\\..\\src\\Batterio.Core\\Batterio.Core.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />

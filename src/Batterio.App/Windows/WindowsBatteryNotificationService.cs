@@ -21,8 +21,20 @@ public sealed class WindowsBatteryNotificationService : IBatteryNotificationServ
     public Task InitializeAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        _registration.RegisterCurrentExecutable();
-        _initialized = true;
+        try
+        {
+            _registration.RegisterCurrentExecutable();
+            _initialized = true;
+        }
+        catch (Exception exception) when (exception is InvalidOperationException or IOException or UnauthorizedAccessException)
+        {
+            // A developer/debug launch may not have the launcher beside the runtime. Keep
+            // the tray monitor usable while persistent activation remains disabled.
+            _log.Log(BatterioLogLevel.Warning,
+                "Windows notification activation is unavailable until the complete Batterio installation is present.",
+                exception);
+            _initialized = false;
+        }
         return Task.CompletedTask;
     }
 
@@ -31,7 +43,7 @@ public sealed class WindowsBatteryNotificationService : IBatteryNotificationServ
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
         ArgumentNullException.ThrowIfNull(deviceName);
-        if (!_initialized) throw new InvalidOperationException("Windows notifications have not been initialized.");
+        if (!_initialized) return Task.CompletedTask;
         // Foreground activation targets the registered COM activator, not a URI protocol.
         var xml = new XElement("toast", new XAttribute("activationType", "foreground"),
             new XAttribute("launch", "low-battery"),

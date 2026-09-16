@@ -38,6 +38,7 @@ public sealed class WindowsNotificationTests
             Assert.Equal(1, platform.RegisterCount);
             Assert.Equal(1, platform.ShortcutWrites);
             Assert.Equal(WindowsToastRegistrationService.ActivatorId, platform.Shortcut!.ActivatorId);
+            Assert.Equal(WindowsToastRegistrationService.ActivationArgument, platform.Shortcut.Arguments);
             Assert.Equal(platform.ProcessAppId, platform.Shortcut.AppUserModelId);
             Assert.Equal("\"C:\\First folder\\Batterio.App.exe\" -ToastActivated", platform.Command);
             Assert.Equal(@"C:\First folder\Batterio.App.exe", platform.ServerExecutable);

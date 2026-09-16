@@ -6,12 +6,24 @@ public partial class App : Application
 {
     private readonly BatteryApplication _application;
     private readonly WindowCoordinator _windows;
+    private readonly RuntimeStartupCompletionCoordinator _startupCompletion;
 
-    public App(BatteryApplication application, WindowCoordinator windows)
+    public App(BatteryApplication application, WindowCoordinator windows, StartupReadiness readiness)
     {
         InitializeComponent();
         _application = application;
         _windows = windows;
+        _startupCompletion = new RuntimeStartupCompletionCoordinator(
+            _application.StartAsync,
+            SetActivationReady,
+            readiness.Signal,
+            readiness.IsSupervised,
+            exception =>
+            {
+                _windows.ReportStartupError(exception.Message);
+                _windows.ShowPopup();
+            },
+            _application.ExitAsync);
     }
 
     protected override Window CreateWindow(IActivationState? activationState)
@@ -29,7 +41,11 @@ public partial class App : Application
             popup.Created -= OnPopupCreated;
         }
 
-        await _application.StartAsync();
+        await _startupCompletion.CompleteAsync();
+    }
+
+    private void SetActivationReady()
+    {
         WindowsToastActivation.Current.SetReady(() => MainThread.BeginInvokeOnMainThread(() =>
         {
             if (!_application.IsExiting) _windows.ShowPopup();

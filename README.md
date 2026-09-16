@@ -9,8 +9,7 @@ The repository pins the .NET SDK in `global.json` and uses the installed .NET MA
 ```powershell
 dotnet restore Batterio.sln --configfile NuGet.Config --runtime win-x64
 dotnet build Batterio.sln -c Release --no-restore
-dotnet test tests/Batterio.Core.Tests/Batterio.Core.Tests.csproj -c Release --no-restore
-dotnet test tests/Batterio.Windows.Tests/Batterio.Windows.Tests.csproj -c Release
+dotnet test Batterio.sln -c Release --no-build
 dotnet run --project src/Batterio.App/Batterio.App.csproj -c Debug
 ```
 
@@ -32,7 +31,7 @@ The popup sizes itself to the device content and grows with the device list up t
 
 Logs are written to `%LocalAppData%\Batterio\Logs\batterio.log` with up to two rotated files, each bounded to approximately 512 KiB. Logs include device and adapter IDs where relevant and never serialize complete adapter settings. Set `BATTERIO_TRACE_HID=1` before launching Batterio to opt into hexadecimal HID TX/RX packet traces in the same bounded log. Leave it unset for routine use.
 
-“Start automatically when Windows starts” controls the current-user `Software\Microsoft\Windows\CurrentVersion\Run` value named `Batterio`. Windows runs that entry at user sign-in and may delay it; Startup Apps policy remains authoritative. The registration uses the published executable path and does not use the single-file extraction directory.
+“Start automatically when Windows starts” controls the current-user `Software\Microsoft\Windows\CurrentVersion\Run` value named `Batterio`. The entry points to `Batterio.App.exe` in the installed folder. Windows runs that entry at user sign-in and may delay it; Startup Apps policy remains authoritative.
 
 ## Adding an adapter
 
@@ -47,29 +46,56 @@ Adapters must use cooperative cancellation. If a device ignores cancellation, Ba
 
 ## Publish
 
-The intended delivery is one unpackaged, self-contained `win-x64` executable. The Release defaults in `Batterio.App.csproj` bundle both the .NET runtime and Windows App Runtime 2.4.0; the native Windows App SDK components are extracted locally when the executable starts.
+The supported delivery is one unpackaged, self-contained `win-x64` folder. It contains the public NativeAOT launcher `Batterio.App.exe`, the private WinUI process `Batterio.Runtime.exe`, the Windows App SDK 2.4.0 files, and the app icon. Deploy the complete folder; the launcher and runtime are designed to stay together.
 
 ```powershell
-dotnet publish src/Batterio.App/Batterio.App.csproj -c Release -o publish
+dotnet restore Batterio.sln --configfile NuGet.Config --runtime win-x64
+.\eng\Publish-Batterio.ps1
+& .\publish\Batterio.App.exe
 ```
 
-Copy `publish/Batterio.App.exe` to a Windows 11 x64 machine. No .NET SDK, separately installed .NET runtime, or separately installed Windows App Runtime is required. Republish Batterio when the bundled Windows App SDK runtime needs to be updated.
+The publish script produces the verified Release build and atomically replaces the `publish` folder. The last command runs its public launcher. To install or copy the application elsewhere, copy the complete `publish` folder and run `Batterio.App.exe` from that folder; do not run `Batterio.Runtime.exe` directly or copy either executable by itself.
 
-For troubleshooting runtime activation separately from single-file extraction, publish the same self-contained application as a folder:
+`Batterio.App.exe` is the stable entry point for Start, the Run key, and cold notification activation. It starts `Batterio.Runtime.exe` in the installation folder, passes through activation arguments, and waits for the runtime readiness event. The runtime arbitrates the existing `Batterio.SingleInstance` identity before starting WinUI. Warm notification activations are redirected to the existing runtime; cold activations start the launcher and then the runtime.
+
+The launcher makes at most five runtime attempts, after delays of 0, 1, 3, 10, and 30 seconds. An attempt succeeds when runtime startup signals readiness after the tray is available, notifications have initialized or safely degraded, and selection and polling have started. Each attempt has 60 seconds to signal readiness. A runtime that exits unsuccessfully at readiness or remains alive without becoming ready is recorded as a failed attempt; a timed-out child process tree is terminated before the launcher starts the next attempt. The launcher also waits up to 60 seconds for the Windows shell before launching anyway.
+
+The tray keeps retrying Explorer-dependent icon registration indefinitely. Retry delays are 1, 2, 5, and 10 seconds, then 30 seconds for subsequent attempts. When Explorer restarts, Batterio removes stale tray state and attempts to add the icon immediately.
+
+The publish script builds both executables in a staging directory, verifies their names and sizes, checks the NativeAOT launcher imports, rejects an unexpected launcher runtime configuration file, verifies the icon and Windows App SDK files, and replaces `publish` only after the staged bundle passes. Its verification summary prints product versions, sizes, and SHA-256 hashes for both executables. Build prerequisites are the .NET 10 SDK and Visual Studio C++ x64 build tools; the distributed folder does not require a separate .NET or Windows App Runtime installation.
+
+The launcher writes bounded startup diagnostics to `%LocalAppData%\Batterio\Logs\startup.log`. Records include its product version, attempt, child PID, exit code, readiness result, and final failure, without storing user arguments or event names.
+
+On notification initialization, Batterio creates or repairs the current-user Start Menu shortcut with App ID `com.batterio.tray` and the existing toast activator CLSID. Its COM activation command targets `Batterio.App.exe` with `-ToastActivated`; notification clicks wait until the popup dispatcher is ready. The Run value name, App ID, tray GUID, and toast CLSID remain compatible with existing installations. These registrations intentionally remain after exit. When permanently removing the portable app, remove `%AppData%\Microsoft\Windows\Start Menu\Programs\Batterio.lnk` and `HKCU\Software\Classes\CLSID\{B68D18D7-6B67-4C24-993C-B597D789E895}`.
+
+Run automated tests with `dotnet test Batterio.sln -c Debug` and `dotnet test Batterio.sln -c Release`. Tests that communicate with real HID hardware remain opt-in. Destructive launcher, Explorer, sign-in, reboot, and Run-key upgrade scenarios belong in a disposable Windows 11 x64 VM. `tests/Batterio.StartupProbe` provides a self-contained runtime substitute for those launcher-attempt scenarios; it is excluded from the production publish.
+
+The `publish` folder should be tested as a complete installation before distribution. The current Windows acceptance matrix and commands are recorded in [CHANGELOG.md](CHANGELOG.md).
+
+## Startup acceptance probe
+
+`tests/Batterio.StartupProbe` is a test-only NativeAOT process for launcher retry scenarios. Build it on a Windows build machine:
 
 ```powershell
-dotnet publish src/Batterio.App/Batterio.App.csproj -c Release -p:PublishSingleFile=false -o artifacts/publish-win-x64-folder
+$probePublishFolder = Join-Path $env:TEMP 'Batterio.StartupProbe'
+dotnet publish tests/Batterio.StartupProbe/Batterio.StartupProbe.csproj -c Release -r win-x64 --self-contained true -o $probePublishFolder
 ```
 
-The executable uses `src/Batterio.App/Resources/AppIcon/batterio.ico` as its icon. Keep the complete folder together when using the troubleshooting publish; the distributed single-file deliverable only requires `Batterio.App.exe`.
+Copy the verified `publish` folder and `Batterio.StartupProbe.exe` into a disposable Windows 11 x64 VM. In that VM, replace only the copied runtime apphost and run the public launcher:
 
-On notification initialization, Batterio creates or repairs its current-user Start Menu shortcut with `com.batterio.tray` and a fixed toast activator CLSID. Its COM activation registration points to the distributed executable, and notification clicks wait until the popup is ready. These registrations intentionally remain after exit. When permanently removing the portable app, remove `%AppData%\Microsoft\Windows\Start Menu\Programs\Batterio.lnk` and `HKCU\Software\Classes\CLSID\{B68D18D7-6B67-4C24-993C-B597D789E895}`. An obsolete `HKCU\Software\Classes\batterio` key from earlier builds can also be removed.
+```powershell
+$acceptanceFolder = Join-Path $env:TEMP 'Batterio.Acceptance'
+$probeExecutable = Join-Path $env:TEMP 'Batterio.StartupProbe.exe'
+$attemptStateFile = Join-Path $env:TEMP 'Batterio.StartupProbe.attempts'
+Copy-Item -LiteralPath $probeExecutable -Destination (Join-Path $acceptanceFolder 'Batterio.Runtime.exe') -Force
+& (Join-Path $acceptanceFolder 'Batterio.App.exe') --state-file $attemptStateFile --fail-before-ready 4
+```
 
-The previous `0xC000027B` startup failure did not reproduce in the 2026-09-10 notification-review smoke run: the fresh single-file executable registered its COM activator and began battery polling. Both output formats published successfully. Automated tests cover notification policy, payload escaping, registration repair and cleanup; the separate Windows suite exercises actual COM activation and shortcut property persistence. Clean-machine Windows 11 acceptance is still outstanding, including notification settings and Do Not Disturb behavior.
+The probe records its launch count in the supplied state file, exits before readiness for the configured number of launches, and then signals readiness and stays alive. Use a fresh state file for each scenario. Set `--fail-before-ready 5` to verify five failures produce no sixth launch. Add `--ready-then-exit-ms 1000` to signal readiness and exit normally after one second. The probe does not implement the app's single-instance or tray behavior, so use the real runtime for those acceptance scenarios. Never replace the runtime in a normal installation with this probe.
 
-Local acceptance confirmed live COM activation for each published format without a duplicate process, and the single-file popup was visually inspected. The scripted adapter submitted exactly one native toast after repeated 29% readings; Windows notification history retained the exact message after the sender and app exited. Direct cold COM activation started the installed `D:\Batterio` copy and displayed its popup. Cold activation did not select the review executable despite the registration observed by the probe, so relocation through cold COM activation is not yet qualified. Actual banner-click behavior and Do Not Disturb still require manual acceptance; a successful COM probe is not a substitute for those checks. The final automated run passed 167 Core tests and 2 native Windows tests, with 3 opt-in hardware tests skipped; the Release build had no warnings or errors.
+## Notification developer probe
 
-For manual notification acceptance, run the published app once to register its executable, then use the test-only probe. It preserves the app's registration and uses a scripted 29% adapter without adding a production simulation setting:
+For manual toast checks on a Windows developer machine, run the published app once to create its current-user activation registration, then run:
 
 ```powershell
 dotnet run --project tests/Batterio.NotificationProbe -c Release -- notify
@@ -77,4 +103,4 @@ dotnet run --project tests/Batterio.NotificationProbe -c Release -- activate
 dotnet run --project tests/Batterio.NotificationProbe -c Release -- history
 ```
 
-`notify` submits one native test toast despite repeated low readings. Inspect the exact text, Batterio identity, Notification Center persistence, and click behavior while the app runs and after exiting it. `activate` directly exercises the COM callback and requests cold activation when needed; verify the process path as well as the return result. `history` reads back only the probe's test notifications from Windows notification history. Use one Batterio copy at a time during acceptance, and repeat on a clean Windows 11 machine without a separately installed Windows App Runtime.
+`notify` submits one native test toast despite repeated low readings. Inspect the exact text, Batterio identity, Notification Center persistence, and click behavior while the app runs and after exiting it. `activate` directly exercises the COM callback and requests cold activation when needed; verify the process path as well as the return result. `history` reads back only the probe's test notifications from Windows notification history. These commands are manual diagnostics and do not replace clean-machine acceptance in the disposable VM.

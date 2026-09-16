@@ -1,3 +1,5 @@
+using Batterio.Core.Startup;
+
 namespace Batterio.App.Windows;
 
 /// <summary>Repairs persistent registration and owns the process's COM class factory.</summary>
@@ -8,19 +10,22 @@ public sealed class WindowsToastRegistrationService : IDisposable
     public const string ActivationArgument = "-ToastActivated";
     private readonly IWindowsToastPlatform _platform;
     private readonly WindowsToastActivation _activation;
-    private readonly Func<string?> _processPath;
+    private readonly Func<string?>? _processPath;
     private readonly Func<string, bool> _fileExists;
+    private readonly Func<InstalledExecutablePaths>? _installedPathsProvider;
     private readonly object _gate = new();
     private IDisposable? _activator;
     private bool _disposed;
 
     public WindowsToastRegistrationService(IWindowsToastPlatform platform, WindowsToastActivation activation,
-        Func<string?>? processPath = null, Func<string, bool>? fileExists = null)
+        Func<string?>? processPath = null, Func<string, bool>? fileExists = null,
+        Func<InstalledExecutablePaths>? installedPathsProvider = null)
     {
         _platform = platform;
         _activation = activation;
-        _processPath = processPath ?? (() => Environment.ProcessPath);
+        _processPath = processPath;
         _fileExists = fileExists ?? File.Exists;
+        _installedPathsProvider = installedPathsProvider;
     }
 
     public void RegisterCurrentExecutable()
@@ -31,7 +36,10 @@ public sealed class WindowsToastRegistrationService : IDisposable
             if (_activator is not null) return;
             var path = ResolveExecutablePath();
             _platform.SetProcessAppId(AppUserModelId);
-            _platform.WriteShortcut(new(path, AppUserModelId, ActivatorId));
+            _platform.WriteShortcut(new ToastShortcutRegistration(path, AppUserModelId, ActivatorId)
+            {
+                Arguments = ActivationArgument
+            });
             _platform.WriteComServer(ActivatorId, path, $"\"{path}\" {ActivationArgument}");
             _activator = _platform.RegisterActivator(ActivatorId, (appId, _) =>
             {
@@ -43,7 +51,9 @@ public sealed class WindowsToastRegistrationService : IDisposable
 
     private string ResolveExecutablePath()
     {
-        var path = _processPath();
+        var path = _processPath is null
+            ? (_installedPathsProvider?.Invoke() ?? InstalledExecutableResolver.Resolve(fileExists: _fileExists)).LauncherPath
+            : _processPath();
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
             throw new InvalidOperationException("Toast registration requires a resolved executable path.");
         try { path = Path.GetFullPath(path); }

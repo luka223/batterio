@@ -3,7 +3,7 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <RootNamespace>Batterio.App</RootNamespace>
-    <AssemblyName>Batterio.App</AssemblyName>
+    <AssemblyName>Batterio.Runtime</AssemblyName>
     <UseMaui>true</UseMaui>
     <MauiVersion>10.0.101</MauiVersion>
     <SingleProject>true</SingleProject>
@@ -17,16 +17,14 @@
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <MauiXamlInflator>SourceGen</MauiXamlInflator>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)' == 'Release'">
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <SelfContained>true</SelfContained>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
     <EnableMsixTooling>true</EnableMsixTooling>
-    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
-    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
     <PublishReadyToRun>false</PublishReadyToRun>
   </PropertyGroup>
 

@@ -24,6 +24,42 @@ public sealed class StartupRegistrationTests
     }
 
     [Fact]
+    public async Task InstalledRegistrationUsesPublicLauncherAndAcceptsExistingSameFolderEntry()
+    {
+        var directory = Path.Combine(Path.GetTempPath(), "Batterio-installed-tests-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(directory);
+        var launcher = Path.Combine(directory, "Batterio.App.exe");
+        var runtime = Path.Combine(directory, "Batterio.Runtime.exe");
+        File.WriteAllText(launcher, "launcher");
+        File.WriteAllText(runtime, "runtime");
+        try
+        {
+            var registry = new FakeRegistry();
+            var paths = new InstalledExecutablePaths(launcher, runtime);
+            var service = new WindowsStartupRegistrationService(
+                registry,
+                fileExists: File.Exists,
+                installedPathsProvider: () => paths);
+
+            registry.Key.SetValue(
+                WindowsStartupRegistrationService.AppName,
+                $"\"{launcher}\"",
+                RegistryValueKind.String);
+
+            Assert.True(await service.IsRegisteredAsync());
+            await service.SetRegisteredAsync(true);
+            Assert.Equal($"\"{launcher}\"", registry.Key.Values[WindowsStartupRegistrationService.AppName]);
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
     public async Task StartupRegistrationRejectsMissingAndGenericHostExecutables()
     {
         var registry = new FakeRegistry();

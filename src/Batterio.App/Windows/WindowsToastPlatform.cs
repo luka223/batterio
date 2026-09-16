@@ -31,6 +31,7 @@ public sealed class WindowsToastPlatform : IWindowsToastPlatform
             var link = (IShellLinkW)shellLink;
             link.SetPath(registration.ExecutablePath);
             link.SetWorkingDirectory(Path.GetDirectoryName(registration.ExecutablePath)!);
+            link.SetArguments(registration.Arguments);
             link.SetDescription("Batterio");
             link.SetIconLocation(registration.ExecutablePath, 0);
             var properties = (IPropertyStore)shellLink;

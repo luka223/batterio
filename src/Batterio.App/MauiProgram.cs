@@ -18,6 +18,8 @@ public static class MauiProgram
         builder.Services.AddSingleton<IBatterioLog>(_ =>
             new RotatingFileLog(Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Batterio", "Logs")));
+        builder.Services.AddSingleton<IProcessTerminator, EnvironmentProcessTerminator>();
+        builder.Services.AddSingleton(StartupReadiness.Current ?? StartupReadiness.CaptureFromEnvironment());
         builder.Services.AddSingleton<IHidCollectionProvider, WindowsHidCollectionProvider>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2SuperstrikeAdapterFactory>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2LightspeedAdapterFactory>();
@@ -48,7 +50,12 @@ public static class MauiProgram
         builder.Services.AddSingleton<WindowCoordinator>();
         builder.Services.AddSingleton<IWindowCoordinator>(services => services.GetRequiredService<WindowCoordinator>());
         builder.Services.AddSingleton<ITrayService, TrayService>();
-        builder.Services.AddSingleton<BatteryApplication>();
+        builder.Services.AddSingleton<BatteryApplication>(services =>
+        {
+            var application = ActivatorUtilities.CreateInstance<BatteryApplication>(services);
+            application.ConfigureProcessTerminator(services.GetRequiredService<IProcessTerminator>());
+            return application;
+        });
 
 #if DEBUG
         builder.Logging.AddDebug();

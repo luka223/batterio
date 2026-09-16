@@ -11,6 +11,8 @@
     <Compile Include="../../src/Batterio.App/Windows/WindowsBatteryNotificationService.cs" Link="Windows/WindowsBatteryNotificationService.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsHidCollectionProvider.cs" Link="Windows/WindowsHidCollectionProvider.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsStartupRegistrationService.cs" Link="Windows/WindowsStartupRegistrationService.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/InstalledExecutableResolver.cs" Link="Windows/InstalledExecutableResolver.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/TrayIconRetryController.cs" Link="Windows/TrayIconRetryController.cs" />
     <ProjectReference Include="..\..\src\Batterio.Core\Batterio.Core.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
     <PackageReference Include="xunit" Version="2.9.3" />
