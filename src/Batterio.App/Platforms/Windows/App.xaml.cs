@@ -23,6 +23,12 @@ public partial class App : MauiWinUIApplication
 
     protected override MauiApp CreateMauiApp() => MauiProgram.CreateMauiApp();
 
+    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    {
+        // Redirecting instances must never create a second tray or start polling.
+        if (_instance.IsCurrent) base.OnLaunched(args);
+    }
+
     private async Task RedirectToExistingInstanceAsync()
     {
         try
@@ -37,13 +43,7 @@ public partial class App : MauiWinUIApplication
 
     private void OnActivated(object? sender, AppActivationArguments args)
     {
-        Microsoft.Maui.ApplicationModel.MainThread.BeginInvokeOnMainThread(() =>
-        {
-            if (Microsoft.Maui.Controls.Application.Current?.Handler?.MauiContext?.Services.GetService(typeof(Batterio.App.Windows.WindowCoordinator)) is Batterio.App.Windows.WindowCoordinator windows)
-            {
-                windows.ShowPopup();
-            }
-        });
+        Batterio.App.Windows.WindowsToastActivation.Current.RequestPopup();
     }
 }
 

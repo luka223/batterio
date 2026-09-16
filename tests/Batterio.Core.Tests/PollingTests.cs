@@ -4,7 +4,7 @@ using Batterio.Core.Abstractions;
 
 namespace Batterio.Core.Tests;
 
-public sealed class PollingTests
+public sealed partial class PollingTests
 {
     [Fact]
     public async Task SuccessfulZeroAndHundredReadingsArePublished()
@@ -13,9 +13,9 @@ public sealed class PollingTests
         await using var coordinator = CreateCoordinator(factory);
         await coordinator.ApplyConfigurationAsync(Snapshot(Device("one")));
 
-        await Eventually(() => coordinator.States.Single().RetrievalState == BatteryRetrievalState.Ready && coordinator.States.Single().LastValidPercentage == 0);
+        await Eventually(() => coordinator.States.Single().State != BatteryChargeState.Offline && coordinator.States.Single().Percentage == 0);
         await coordinator.RefreshAllAsync();
-        await Eventually(() => coordinator.States.Single().LastValidPercentage == 100);
+        await Eventually(() => coordinator.States.Single().Percentage == 100);
     }
 
     [Fact]
@@ -25,32 +25,49 @@ public sealed class PollingTests
         await using var coordinator = CreateCoordinator(factory);
         await coordinator.ApplyConfigurationAsync(Snapshot(Device("one")));
 
-        await Eventually(() => coordinator.States.Single().RetrievalState == BatteryRetrievalState.Unavailable);
+        await Eventually(() => coordinator.States.Single().State == BatteryChargeState.Offline);
         var state = coordinator.States.Single();
-        Assert.Null(state.LastValidPercentage);
-        Assert.Equal("Unavailable", state.StatusText);
+        Assert.Null(state.Percentage);
+        Assert.Equal(BatteryChargeState.Offline, state.State);
     }
 
     [Fact]
-    public async Task ATimeoutRetainsLastValidReadingAsStaleAndDoesNotOverlap()
+    public async Task ATimeoutClearsTheReadingAndDoesNotOverlap()
     {
         var adapter = new FirstThenBlockingAdapter(75);
         await using var coordinator = CreateCoordinator(new SingleAdapterFactory(adapter));
         await coordinator.ApplyConfigurationAsync(Snapshot(Device("one")));
 
-        await Eventually(() => coordinator.States.Single().LastValidPercentage == 75);
+        await Eventually(() => coordinator.States.Single().Percentage == 75);
         await Task.Delay(250);
         var refresh = coordinator.RefreshAllAsync();
         await Task.Delay(100);
         Assert.True(adapter.Started);
-        await Eventually(() => coordinator.States.Single().RetrievalState == BatteryRetrievalState.Stale);
+        Assert.Equal(75, coordinator.States.Single().Percentage);
+        await Eventually(() => coordinator.States.Single().State == BatteryChargeState.Offline);
         var state = coordinator.States.Single();
-        Assert.Equal(75, state.LastValidPercentage);
-        Assert.Contains("timed out", state.Error!, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(state.Percentage);
+        Assert.Equal(BatteryChargeState.Offline, state.State);
 
         Assert.False(refresh.IsCompleted);
         adapter.Complete(75);
         await refresh;
+    }
+
+    [Fact]
+    public async Task PartialReadingReplacesTheWholePreviousReading()
+    {
+        var factory = new SequenceFactory(new BatteryReading(15, BatteryChargeState.Charging), new BatteryReading(null, BatteryChargeState.Charging));
+        await using var coordinator = CreateCoordinator(factory);
+        await coordinator.ApplyConfigurationAsync(Snapshot(Device("one")));
+
+        await Eventually(() => coordinator.States.Single().Percentage == 15);
+        await coordinator.RefreshAllAsync();
+        await Eventually(() => coordinator.States.Single().Percentage is null);
+
+        var state = coordinator.States.Single();
+        Assert.Null(state.Percentage);
+        Assert.Equal(BatteryChargeState.Charging, state.State);
     }
 
     [Fact]
@@ -62,12 +79,15 @@ public sealed class PollingTests
         await coordinator.ApplyConfigurationAsync(Snapshot(Device("same")));
         await Eventually(() => oldAdapter.Started);
 
-        await coordinator.ApplyConfigurationAsync(Snapshot(Device("same")));
-        await Eventually(() => coordinator.States.Single().LastValidPercentage == 80);
+        var replacement = coordinator.ApplyConfigurationAsync(Snapshot(Device("same")));
+        await Task.Delay(100);
+        Assert.False(replacement.IsCompleted);
         oldAdapter.Complete(5);
+        await replacement;
+        await Eventually(() => coordinator.States.Single().Percentage == 80);
         await Eventually(() => oldAdapter.Disposed);
 
-        Assert.Equal(80, coordinator.States.Single().LastValidPercentage);
+        Assert.Equal(80, coordinator.States.Single().Percentage);
     }
 
     [Fact]
@@ -139,14 +159,15 @@ public sealed class PollingTests
 
     private sealed class SequenceAdapter(Queue<object> values) : IBatteryAdapter
     {
-        public Task<int> GetBatteryStatus(CancellationToken cancellationToken = default)
+        public Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default)
         {
             var next = values.Count == 0 ? 50 : values.Dequeue();
             return next switch
             {
-                int value => Task.FromResult(value),
-                Exception exception => Task.FromException<int>(exception),
-                _ => Task.FromResult(50)
+                int value => Task.FromResult(new BatteryReading(value, BatteryChargeState.NotCharging)),
+                BatteryReading reading => Task.FromResult(reading),
+                Exception exception => Task.FromException<BatteryReading>(exception),
+                _ => Task.FromResult(new BatteryReading(50, BatteryChargeState.NotCharging))
             };
         }
 
@@ -173,21 +194,22 @@ public sealed class PollingTests
 
     private sealed class ImmediateAdapter(int value) : IBatteryAdapter
     {
-        public Task<int> GetBatteryStatus(CancellationToken cancellationToken = default) => Task.FromResult(value);
+        public Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BatteryReading(value, BatteryChargeState.NotCharging));
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 
     private sealed class BlockingAdapter : IBatteryAdapter
     {
-        private readonly TaskCompletionSource<int> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<BatteryReading> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public bool Started { get; private set; }
         public bool Disposed { get; private set; }
-        public Task<int> GetBatteryStatus(CancellationToken cancellationToken = default)
+        public Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default)
         {
             Started = true;
             return _completion.Task;
         }
-        public void Complete(int result) => _completion.TrySetResult(result);
+        public void Complete(int result) => _completion.TrySetResult(new BatteryReading(result, BatteryChargeState.NotCharging));
         public ValueTask DisposeAsync()
         {
             Disposed = true;
@@ -197,23 +219,23 @@ public sealed class PollingTests
 
     private sealed class FirstThenBlockingAdapter(int firstValue) : IBatteryAdapter
     {
-        private readonly TaskCompletionSource<int> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<BatteryReading> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
         private int _calls;
 
         public bool Started { get; private set; }
 
-        public Task<int> GetBatteryStatus(CancellationToken cancellationToken = default)
+        public Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default)
         {
             if (Interlocked.Increment(ref _calls) == 1)
             {
-                return Task.FromResult(firstValue);
+                return Task.FromResult(new BatteryReading(firstValue, BatteryChargeState.NotCharging));
             }
 
             Started = true;
             return _completion.Task;
         }
 
-        public void Complete(int result) => _completion.TrySetResult(result);
+        public void Complete(int result) => _completion.TrySetResult(new BatteryReading(result, BatteryChargeState.NotCharging));
 
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }

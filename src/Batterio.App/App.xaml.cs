@@ -30,5 +30,9 @@ public partial class App : Application
         }
 
         await _application.StartAsync();
+        WindowsToastActivation.Current.SetReady(() => MainThread.BeginInvokeOnMainThread(() =>
+        {
+            if (!_application.IsExiting) _windows.ShowPopup();
+        }));
     }
 }

@@ -9,12 +9,18 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.App", "src\Batteri
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.Core.Tests", "tests\Batterio.Core.Tests\Batterio.Core.Tests.csproj", "{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A003}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Batterio.Windows.Tests", "tests\Batterio.Windows.Tests\Batterio.Windows.Tests.csproj", "{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A004}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
 		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A004}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A004}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A004}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A004}.Release|Any CPU.Build.0 = Release|Any CPU
 		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A001}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A001}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{7D30A4E0-5FD5-4B80-9E9D-CA7DD6D7A001}.Release|Any CPU.ActiveCfg = Release|Any CPU

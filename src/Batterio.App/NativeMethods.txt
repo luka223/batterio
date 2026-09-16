@@ -19,3 +19,5 @@ Shell_NotifyIconGetRect
 ShowWindow
 TranslateMessage
 UnregisterClass
+CancelIoEx
+SetCurrentProcessExplicitAppUserModelID

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Batterio.Core.Abstractions;
 
 namespace Batterio.Core;
@@ -5,37 +6,41 @@ namespace Batterio.Core;
 public sealed class PollingCoordinator : IAsyncDisposable
 {
     private readonly AdapterRegistry _registry;
-    private readonly IClock _clock;
     private readonly IBatterioLog _log;
     private readonly SemaphoreSlim _globalConcurrency = new(4, 4);
+    private readonly SemaphoreSlim _reconcileGate = new(1, 1);
     private readonly object _gate = new();
     private readonly Dictionary<string, DeviceWorker> _workers = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, DeviceBatteryState> _states = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, DeviceConfiguration> _desired = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _stateOrder = new();
-    private readonly List<Task> _retiredWorkers = new();
+    private readonly Dictionary<string, Task> _retirements = new(StringComparer.OrdinalIgnoreCase);
     private CancellationTokenSource _lifetime = new();
     private long _generation;
+    private long _workerIdentity;
+    private long _snapshotRevision;
+    private PollingSnapshot _snapshot = new(0, Array.Empty<DeviceBatteryState>());
     private bool _stopped;
 
-    public PollingCoordinator(AdapterRegistry registry, IClock? clock = null, IBatterioLog? log = null)
+    public PollingCoordinator(AdapterRegistry registry, IBatterioLog? log = null)
     {
-        _registry = registry;
-        _clock = clock ?? new SystemClock();
+        _registry = registry ?? throw new ArgumentNullException(nameof(registry));
         _log = log ?? new NullBatterioLog();
     }
 
     public event EventHandler<DeviceBatteryStateChangedEventArgs>? StateChanged;
 
-    public IReadOnlyList<DeviceBatteryState> States
+    public event EventHandler<PollingSnapshotChangedEventArgs>? SnapshotChanged;
+
+    public IReadOnlyList<DeviceBatteryState> States => CurrentSnapshot.States;
+
+    public PollingSnapshot CurrentSnapshot
     {
         get
         {
             lock (_gate)
             {
-                return _stateOrder
-                    .Where(_states.ContainsKey)
-                    .Select(id => _states[id])
-                    .ToArray();
+                return _snapshot;
             }
         }
     }
@@ -45,89 +50,30 @@ public sealed class PollingCoordinator : IAsyncDisposable
 
     public async Task StartDevicesAsync(IReadOnlyList<DeviceConfiguration> devices, CancellationToken cancellationToken = default)
     {
-        DeviceWorker[] previousWorkers;
-        long generation;
-        lock (_gate)
+        ArgumentNullException.ThrowIfNull(devices);
+        await _reconcileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            ThrowIfStopped();
-            generation = ++_generation;
-            previousWorkers = _workers.Values.ToArray();
-            _workers.Clear();
-            _states.Clear();
-            _stateOrder.Clear();
-            foreach (var device in devices)
-            {
-                _stateOrder.Add(device.Id);
-                _states[device.Id] = new DeviceBatteryState
-                {
-                    Configuration = device,
-                    RetrievalState = device.Enabled
-                        ? BatteryRetrievalState.Loading
-                        : BatteryRetrievalState.Disabled
-                };
-            }
+            await ReplaceDevicesAsync(devices, cancellationToken).ConfigureAwait(false);
         }
-
-        foreach (var state in States)
+        finally
         {
-            Publish(state);
+            _reconcileGate.Release();
         }
+    }
 
-        foreach (var worker in previousWorkers)
+    public async Task SetActiveDevicesAsync(IReadOnlyList<DeviceConfiguration> devices, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(devices);
+        await _reconcileGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            worker.Stop();
-            var retirement = RetireWorkerAsync(worker);
-            lock (_gate)
-            {
-                _retiredWorkers.Add(retirement);
-            }
+            await ReconcileDevicesAsync(devices, cancellationToken).ConfigureAwait(false);
         }
-
-        var newWorkers = new List<DeviceWorker>();
-        foreach (var device in devices)
+        finally
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!device.Enabled)
-            {
-                continue;
-            }
-
-            try
-            {
-                var adapter = _registry.CreateAdapter(device);
-                var worker = new DeviceWorker(this, device, adapter, generation, _lifetime.Token);
-                lock (_gate)
-                {
-                    if (_stopped || generation != _generation)
-                    {
-                        worker.Stop();
-                    }
-                    else
-                    {
-                        _workers[device.Id] = worker;
-                        newWorkers.Add(worker);
-                    }
-                }
-            }
-            catch (Exception exception)
-            {
-                _log.Log(BatterioLogLevel.Error,
-                    $"Adapter configuration failed for device '{device.Id}' (adapter '{device.AdapterId}').",
-                    exception);
-                UpdateState(device.Id, generation, state => state with
-                {
-                    RetrievalState = BatteryRetrievalState.ConfigurationError,
-                    Error = exception.Message
-                });
-            }
+            _reconcileGate.Release();
         }
-
-        foreach (var worker in newWorkers)
-        {
-            worker.Start();
-        }
-
-        await Task.CompletedTask;
     }
 
     public async Task RefreshAllAsync(CancellationToken cancellationToken = default)
@@ -144,6 +90,7 @@ public sealed class PollingCoordinator : IAsyncDisposable
 
     public async Task RefreshDeviceAsync(string deviceId, CancellationToken cancellationToken = default)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
         DeviceWorker? worker;
         lock (_gate)
         {
@@ -170,16 +117,22 @@ public sealed class PollingCoordinator : IAsyncDisposable
             _stopped = true;
             workers = _workers.Values.ToArray();
             _workers.Clear();
+            _desired.Clear();
             _lifetime.Cancel();
         }
 
         foreach (var worker in workers)
         {
             worker.Stop();
+            ScheduleRetirement(worker);
         }
 
-        var retirementTasks = workers.Select(RetireWorkerAsync).ToArray();
-        var allRetirements = Task.WhenAll(retirementTasks);
+        Task allRetirements;
+        lock (_gate)
+        {
+            allRetirements = Task.WhenAll(_retirements.Values.ToArray());
+        }
+
         if (drainTimeout is { } timeout)
         {
             await Task.WhenAny(allRetirements, Task.Delay(timeout)).ConfigureAwait(false);
@@ -194,7 +147,213 @@ public sealed class PollingCoordinator : IAsyncDisposable
     {
         await StopAsync().ConfigureAwait(false);
         _globalConcurrency.Dispose();
+        _reconcileGate.Dispose();
         _lifetime.Dispose();
+    }
+
+    private async Task ReplaceDevicesAsync(IReadOnlyList<DeviceConfiguration> devices, CancellationToken cancellationToken)
+    {
+        var desired = NormalizeDevices(devices);
+        DeviceWorker[] previousWorkers;
+        PollingSnapshot snapshot;
+        long generation;
+        lock (_gate)
+        {
+            ThrowIfStopped();
+            generation = ++_generation;
+            previousWorkers = _workers.Values.ToArray();
+            _workers.Clear();
+            _desired.Clear();
+            foreach (var device in desired)
+            {
+                _desired[device.Id] = device;
+            }
+
+            _states.Clear();
+            _stateOrder.Clear();
+            foreach (var device in desired)
+            {
+                _stateOrder.Add(device.Id);
+                _states[device.Id] = InitialState(device);
+            }
+
+            snapshot = PublishSnapshotLocked();
+        }
+
+        Publish(snapshot, snapshot.States);
+
+        foreach (var worker in previousWorkers)
+        {
+            worker.Stop();
+            ScheduleRetirement(worker);
+        }
+
+        await CreateWorkersAsync(desired, generation, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task ReconcileDevicesAsync(IReadOnlyList<DeviceConfiguration> devices, CancellationToken cancellationToken)
+    {
+        var desired = NormalizeDevices(devices);
+        var retired = new List<DeviceWorker>();
+        var toCreate = new List<DeviceConfiguration>();
+        PollingSnapshot? membershipSnapshot = null;
+
+        lock (_gate)
+        {
+            ThrowIfStopped();
+            var desiredById = desired.ToDictionary(device => device.Id, StringComparer.OrdinalIgnoreCase);
+            foreach (var pair in _workers.ToArray())
+            {
+                if (!desiredById.TryGetValue(pair.Key, out var next) || !ConfigurationsEqual(pair.Value.Device, next))
+                {
+                    _workers.Remove(pair.Key);
+                    retired.Add(pair.Value);
+                }
+            }
+
+            _desired.Clear();
+            foreach (var device in desired)
+            {
+                _desired[device.Id] = device;
+            }
+
+            var oldStates = _stateOrder.Select(id => _states[id]).ToArray();
+            _stateOrder.Clear();
+            foreach (var device in desired)
+            {
+                _stateOrder.Add(device.Id);
+                if (!_states.TryGetValue(device.Id, out var oldState) ||
+                    !ConfigurationsEqual(oldState.Configuration, device))
+                {
+                    _states[device.Id] = InitialState(device);
+                }
+            }
+
+            foreach (var id in _states.Keys.Where(id => !desiredById.ContainsKey(id)).ToArray())
+            {
+                _states.Remove(id);
+            }
+
+            var newStates = _stateOrder.Select(id => _states[id]).ToArray();
+            if (!StateListsEqual(oldStates, newStates) ||
+                retired.Count > 0 ||
+                desired.Any(device => device.Enabled && !_workers.ContainsKey(device.Id)))
+            {
+                membershipSnapshot = PublishSnapshotLocked();
+            }
+
+            toCreate.AddRange(desired.Where(device => device.Enabled && !_workers.ContainsKey(device.Id)));
+        }
+
+        if (membershipSnapshot is not null)
+        {
+            Publish(membershipSnapshot, membershipSnapshot.States);
+        }
+
+        foreach (var worker in retired)
+        {
+            worker.Stop();
+            ScheduleRetirement(worker);
+        }
+
+        await CreateWorkersAsync(toCreate, _generation, cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task CreateWorkersAsync(
+        IEnumerable<DeviceConfiguration> devices,
+        long generation,
+        CancellationToken cancellationToken)
+    {
+        using var operationLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
+        var operationToken = operationLifetime.Token;
+        foreach (var device in devices)
+        {
+            operationToken.ThrowIfCancellationRequested();
+            await WaitForRetirementAsync(device.Id, operationToken).ConfigureAwait(false);
+
+            lock (_gate)
+            {
+                if (_stopped || generation != _generation ||
+                    !_desired.TryGetValue(device.Id, out var desired) ||
+                    !ConfigurationsEqual(desired, device) ||
+                    _workers.ContainsKey(device.Id))
+                {
+                    continue;
+                }
+            }
+
+            try
+            {
+                var adapter = _registry.CreateAdapter(device);
+                var worker = new DeviceWorker(this, device, adapter, generation, Interlocked.Increment(ref _workerIdentity), _lifetime.Token);
+                var added = false;
+                lock (_gate)
+                {
+                    if (!_stopped && generation == _generation &&
+                        _desired.TryGetValue(device.Id, out var desired) &&
+                        ConfigurationsEqual(desired, device) && !_workers.ContainsKey(device.Id))
+                    {
+                        _workers[device.Id] = worker;
+                        added = true;
+                    }
+                }
+
+                if (added)
+                {
+                    worker.Start();
+                }
+                else
+                {
+                    worker.Stop();
+                    await worker.DisposeAsync().ConfigureAwait(false);
+                }
+            }
+            catch (Exception exception)
+            {
+                _log.Log(BatterioLogLevel.Error,
+                    $"Adapter configuration failed for device '{device.Id}' (adapter '{device.AdapterId}').",
+                    exception);
+                SetError(device.Id, device, exception.Message);
+            }
+        }
+    }
+
+    private async Task WaitForRetirementAsync(string deviceId, CancellationToken cancellationToken)
+    {
+        Task? retirement;
+        lock (_gate)
+        {
+            _retirements.TryGetValue(deviceId, out retirement);
+        }
+
+        if (retirement is not null)
+        {
+            await retirement.WaitAsync(cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private void ScheduleRetirement(DeviceWorker worker)
+    {
+        var retirement = RetireWorkerAsync(worker);
+        lock (_gate)
+        {
+            _retirements[worker.Device.Id] = retirement;
+        }
+
+        _ = retirement.ContinueWith(
+            _ =>
+            {
+                lock (_gate)
+                {
+                    if (_retirements.TryGetValue(worker.Device.Id, out var current) && ReferenceEquals(current, retirement))
+                    {
+                        _retirements.Remove(worker.Device.Id);
+                    }
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default);
     }
 
     private async Task RetireWorkerAsync(DeviceWorker worker)
@@ -212,12 +371,6 @@ public sealed class PollingCoordinator : IAsyncDisposable
 
     private async Task RunAttemptAsync(DeviceWorker worker)
     {
-        UpdateState(worker.Device.Id, worker.Generation, state => state with
-        {
-            RetrievalState = BatteryRetrievalState.Retrieving,
-            Error = null
-        });
-
         var acquired = false;
         try
         {
@@ -233,6 +386,13 @@ public sealed class PollingCoordinator : IAsyncDisposable
 
             if (completed != adapterTask)
             {
+                if (worker.Token.IsCancellationRequested)
+                {
+                    await AwaitAdapterAndReleaseAsync(adapterTask, acquired).ConfigureAwait(false);
+                    acquired = false;
+                    return;
+                }
+
                 UpdateFailure(worker, "The adapter timed out.");
                 _log.Log(BatterioLogLevel.Warning,
                     $"Adapter timed out for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').");
@@ -241,10 +401,10 @@ public sealed class PollingCoordinator : IAsyncDisposable
                 return;
             }
 
-            int percentage;
+            BatteryReading reading;
             try
             {
-                percentage = await adapterTask.ConfigureAwait(false);
+                reading = await adapterTask.ConfigureAwait(false);
             }
             catch (OperationCanceledException) when (!worker.Token.IsCancellationRequested)
             {
@@ -254,19 +414,17 @@ public sealed class PollingCoordinator : IAsyncDisposable
                 return;
             }
 
-            if (percentage is < 0 or > 100)
+            if (reading is null)
             {
-                UpdateFailure(worker, $"The adapter returned an invalid percentage ({percentage}).");
+                UpdateFailure(worker, "The adapter returned no battery reading.");
                 _log.Log(BatterioLogLevel.Error,
-                    $"Adapter returned invalid percentage for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').");
+                    $"Adapter returned no battery reading for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').");
                 return;
             }
 
-            UpdateState(worker.Device.Id, worker.Generation, state => state with
+            UpdateState(worker, state => state with
             {
-                LastValidPercentage = percentage,
-                RetrievalState = BatteryRetrievalState.Ready,
-                LastSuccessfulUpdate = _clock.UtcNow,
+                Reading = reading,
                 Error = null
             });
         }
@@ -289,7 +447,7 @@ public sealed class PollingCoordinator : IAsyncDisposable
         }
     }
 
-    private async Task AwaitAdapterAndReleaseAsync(Task<int> adapterTask, bool acquired)
+    private async Task AwaitAdapterAndReleaseAsync(Task<BatteryReading> adapterTask, bool acquired)
     {
         try
         {
@@ -311,35 +469,101 @@ public sealed class PollingCoordinator : IAsyncDisposable
         }
     }
 
-    private void UpdateFailure(DeviceWorker worker, string error)
-    {
-        UpdateState(worker.Device.Id, worker.Generation, state => state with
+    private void UpdateFailure(DeviceWorker worker, string error) =>
+        UpdateState(worker, state => state with
         {
-            RetrievalState = state.LastValidPercentage.HasValue
-                ? BatteryRetrievalState.Stale
-                : BatteryRetrievalState.Unavailable,
+            Reading = BatteryReading.Offline,
             Error = error
         });
-    }
 
-    private void UpdateState(string deviceId, long generation, Func<DeviceBatteryState, DeviceBatteryState> update)
+    private void UpdateState(DeviceWorker worker, Func<DeviceBatteryState, DeviceBatteryState> update)
     {
-        DeviceBatteryState? next = null;
+        PollingSnapshot? snapshot = null;
+        DeviceBatteryState? state = null;
         lock (_gate)
         {
-            if (generation != _generation || !_states.TryGetValue(deviceId, out var current))
+            if (!_workers.TryGetValue(worker.Device.Id, out var active) ||
+                !ReferenceEquals(active, worker) ||
+                !_states.TryGetValue(worker.Device.Id, out var current))
             {
                 return;
             }
 
-            next = update(current);
-            _states[deviceId] = next;
+            var next = update(current);
+            if (StateEquivalent(current, next))
+            {
+                state = current;
+            }
+            else
+            {
+                _states[worker.Device.Id] = next;
+                snapshot = PublishSnapshotLocked();
+                state = next;
+            }
         }
 
-        Publish(next);
+        if (snapshot is not null)
+        {
+            Publish(snapshot, new[] { state });
+        }
+        else
+        {
+            PublishStateChanged(state);
+        }
     }
 
-    private void Publish(DeviceBatteryState state)
+    private void SetError(string deviceId, DeviceConfiguration configuration, string error)
+    {
+        PollingSnapshot? snapshot = null;
+        lock (_gate)
+        {
+            if (!_states.TryGetValue(deviceId, out var current) ||
+                !ConfigurationsEqual(current.Configuration, configuration))
+            {
+                return;
+            }
+
+            var next = current with { Reading = BatteryReading.Offline, Error = error };
+            if (!StateEquivalent(current, next))
+            {
+                _states[deviceId] = next;
+                snapshot = PublishSnapshotLocked();
+            }
+        }
+
+        if (snapshot is not null)
+        {
+            Publish(snapshot, snapshot.States.Where(state =>
+                string.Equals(state.Configuration.Id, deviceId, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    private PollingSnapshot PublishSnapshotLocked()
+    {
+        _snapshot = new PollingSnapshot(
+            ++_snapshotRevision,
+            _stateOrder.Where(_states.ContainsKey).Select(id => _states[id]).ToArray());
+        return _snapshot;
+    }
+
+    private void Publish(PollingSnapshot snapshot, IEnumerable<DeviceBatteryState> compatibilityStates)
+    {
+        foreach (var state in compatibilityStates)
+        {
+            PublishStateChanged(state);
+        }
+
+        try
+        {
+            SnapshotChanged?.Invoke(this, new PollingSnapshotChangedEventArgs(snapshot));
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Error, "A polling snapshot listener failed.", exception);
+        }
+    }
+
+    private void PublishStateChanged(DeviceBatteryState state)
     {
         try
         {
@@ -359,6 +583,65 @@ public sealed class PollingCoordinator : IAsyncDisposable
         }
     }
 
+    private static DeviceBatteryState InitialState(DeviceConfiguration device) => new()
+    {
+        Configuration = device,
+        Reading = BatteryReading.Offline
+    };
+
+    private static IReadOnlyList<DeviceConfiguration> NormalizeDevices(IReadOnlyList<DeviceConfiguration> devices)
+    {
+        var result = new List<DeviceConfiguration>(devices.Count);
+        var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var device in devices)
+        {
+            ArgumentNullException.ThrowIfNull(device);
+            if (string.IsNullOrWhiteSpace(device.Id))
+            {
+                throw new ArgumentException("Every active device must have a nonempty id.", nameof(devices));
+            }
+
+            if (!ids.Add(device.Id))
+            {
+                throw new ArgumentException($"Device id '{device.Id}' is duplicated.", nameof(devices));
+            }
+
+            result.Add(device);
+        }
+
+        return result;
+    }
+
+    private static bool StateListsEqual(IReadOnlyList<DeviceBatteryState> first, IReadOnlyList<DeviceBatteryState> second) =>
+        first.Count == second.Count && first.Zip(second).All(pair =>
+            string.Equals(pair.First.Configuration.Id, pair.Second.Configuration.Id, StringComparison.OrdinalIgnoreCase) &&
+            StateEquivalent(pair.First, pair.Second));
+
+    private static bool StateEquivalent(DeviceBatteryState first, DeviceBatteryState second) =>
+        ConfigurationsEqual(first.Configuration, second.Configuration) &&
+        Equals(first.Reading, second.Reading) &&
+        string.Equals(first.Error, second.Error, StringComparison.Ordinal);
+
+    private static bool ConfigurationsEqual(DeviceConfiguration first, DeviceConfiguration second) =>
+        string.Equals(first.Id, second.Id, StringComparison.OrdinalIgnoreCase) &&
+        string.Equals(first.Name, second.Name, StringComparison.Ordinal) &&
+        string.Equals(first.PhotoPath, second.PhotoPath, StringComparison.Ordinal) &&
+        string.Equals(first.AdapterId, second.AdapterId, StringComparison.OrdinalIgnoreCase) &&
+        first.Enabled == second.Enabled &&
+        first.PollIntervalSeconds == second.PollIntervalSeconds &&
+        first.TimeoutSeconds == second.TimeoutSeconds &&
+        JsonElementsEqual(first.AdapterSettings, second.AdapterSettings);
+
+    private static bool JsonElementsEqual(JsonElement first, JsonElement second)
+    {
+        if (first.ValueKind == JsonValueKind.Undefined || second.ValueKind == JsonValueKind.Undefined)
+        {
+            return first.ValueKind == second.ValueKind;
+        }
+
+        return JsonElement.DeepEquals(first, second);
+    }
+
     private sealed class DeviceWorker : IAsyncDisposable
     {
         private readonly PollingCoordinator _owner;
@@ -366,16 +649,23 @@ public sealed class PollingCoordinator : IAsyncDisposable
         private TaskCompletionSource<bool> _refreshSignal = NewSignal();
         private readonly object _gate = new();
         private Task? _loop;
-        private Task? _activeAttempt;
         private TaskCompletionSource<bool>? _refreshCompletion;
         private bool _stopped;
+        private int _adapterDisposed;
 
-        public DeviceWorker(PollingCoordinator owner, DeviceConfiguration device, IBatteryAdapter adapter, long generation, CancellationToken lifetimeToken)
+        public DeviceWorker(
+            PollingCoordinator owner,
+            DeviceConfiguration device,
+            IBatteryAdapter adapter,
+            long generation,
+            long identity,
+            CancellationToken lifetimeToken)
         {
             _owner = owner;
             Device = device;
             Adapter = adapter;
             Generation = generation;
+            Identity = identity;
             _cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetimeToken);
         }
 
@@ -385,14 +675,13 @@ public sealed class PollingCoordinator : IAsyncDisposable
 
         public long Generation { get; }
 
+        public long Identity { get; }
+
         public CancellationToken Token => _cancellation.Token;
 
         public Task Completion => _loop ?? Task.CompletedTask;
 
-        public void Start()
-        {
-            _loop = Task.Run(RunAsync);
-        }
+        public void Start() => _loop = Task.Run(RunAsync);
 
         public void Stop()
         {
@@ -420,17 +709,19 @@ public sealed class PollingCoordinator : IAsyncDisposable
                     return Task.CompletedTask;
                 }
 
-                _refreshCompletion ??= new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+                _refreshCompletion ??= NewSignal();
                 _refreshSignal.TrySetResult(true);
-
                 return _refreshCompletion.Task.WaitAsync(cancellationToken);
             }
         }
 
         public async Task DisposeAdapterAsync()
         {
-            await Adapter.DisposeAsync().ConfigureAwait(false);
-            _cancellation.Dispose();
+            if (Interlocked.Exchange(ref _adapterDisposed, 1) == 0)
+            {
+                await Adapter.DisposeAsync().ConfigureAwait(false);
+                _cancellation.Dispose();
+            }
         }
 
         public async ValueTask DisposeAsync()
@@ -472,6 +763,7 @@ public sealed class PollingCoordinator : IAsyncDisposable
                                     _refreshSignal = NewSignal();
                                 }
                             }
+
                             refreshTriggered = true;
                         }
                     }
@@ -486,7 +778,6 @@ public sealed class PollingCoordinator : IAsyncDisposable
                         }
 
                         attempt = _owner.RunAttemptAsync(this);
-                        _activeAttempt = attempt;
                     }
 
                     try
@@ -495,14 +786,9 @@ public sealed class PollingCoordinator : IAsyncDisposable
                     }
                     finally
                     {
-                        lock (_gate)
+                        if (refreshTriggered)
                         {
-                            if (ReferenceEquals(_activeAttempt, attempt))
-                            {
-                                _activeAttempt = null;
-                            }
-
-                            if (refreshTriggered)
+                            lock (_gate)
                             {
                                 _refreshCompletion?.TrySetResult(true);
                                 _refreshCompletion = null;

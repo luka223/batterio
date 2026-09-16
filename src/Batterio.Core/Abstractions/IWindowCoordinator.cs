@@ -12,6 +12,8 @@ public interface IWindowCoordinator
 
     void ShowTrayMenu();
 
+    Task ShowSettingsAsync();
+
     void ReportStartupError(string message);
 
     Task CloseAsync();

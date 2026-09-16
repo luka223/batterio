@@ -1,5 +1,6 @@
 using Batterio.Core;
 using Batterio.Core.Abstractions;
+using Batterio.Core.Notifications;
 using Batterio.App.Windows;
 using Microsoft.Extensions.Logging;
 
@@ -10,6 +11,8 @@ public sealed class BatteryApplication : IAsyncDisposable
     private readonly PollingCoordinator _polling;
     private readonly ITrayService _tray;
     private readonly WindowCoordinator _windows;
+    private readonly DeviceSelectionCoordinator _selection;
+    private readonly LowBatteryNotificationCoordinator _lowBatteryNotifications;
     private readonly IBatterioLog _log;
     private readonly ILogger<BatteryApplication> _logger;
     private bool _started;
@@ -17,12 +20,16 @@ public sealed class BatteryApplication : IAsyncDisposable
 
     public BatteryApplication(
         PollingCoordinator polling,
+        DeviceSelectionCoordinator selection,
+        LowBatteryNotificationCoordinator lowBatteryNotifications,
         ITrayService tray,
         WindowCoordinator windows,
         IBatterioLog log,
         ILogger<BatteryApplication> logger)
     {
         _polling = polling;
+        _selection = selection;
+        _lowBatteryNotifications = lowBatteryNotifications;
         _tray = tray;
         _windows = windows;
         _log = log;
@@ -50,10 +57,10 @@ public sealed class BatteryApplication : IAsyncDisposable
         _windows.HidePopup();
         try
         {
-            var devices = BuiltInDevices.Create();
-            await _polling.StartDevicesAsync(devices).ConfigureAwait(false);
             await _tray.StartAsync().ConfigureAwait(false);
-            _logger.LogInformation("Batterio started with {DeviceCount} built-in device(s).", devices.Count);
+            await _lowBatteryNotifications.StartAsync().ConfigureAwait(false);
+            await _selection.StartAsync().ConfigureAwait(false);
+            _logger.LogInformation("Batterio started with receiver discovery enabled.");
         }
         catch (Exception exception)
         {
@@ -74,9 +81,12 @@ public sealed class BatteryApplication : IAsyncDisposable
         }
 
         _isExiting = true;
+        WindowsToastActivation.Current.Stop();
         _log.Log(BatterioLogLevel.Information, "Exit requested.");
         try
         {
+            await _selection.StopAsync().ConfigureAwait(false);
+            await _lowBatteryNotifications.StopAsync().ConfigureAwait(false);
             await _polling.StopAsync(TimeSpan.FromMilliseconds(750)).ConfigureAwait(false);
             await _tray.StopAsync().ConfigureAwait(false);
             await _windows.CloseAsync().ConfigureAwait(false);
@@ -93,9 +103,12 @@ public sealed class BatteryApplication : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        WindowsToastActivation.Current.Stop();
         _tray.ActionRaised -= OnTrayAction;
         _tray.SystemResumed -= OnSystemResumed;
         _windows.MenuActionRequested -= OnMenuAction;
+        await _lowBatteryNotifications.DisposeAsync().ConfigureAwait(false);
+        await _selection.DisposeAsync().ConfigureAwait(false);
         await _polling.DisposeAsync().ConfigureAwait(false);
         await _tray.DisposeAsync().ConfigureAwait(false);
     }
@@ -126,6 +139,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         _ = action switch
         {
             TrayMenuAction.ShowPopup => MainThread.InvokeOnMainThreadAsync(() => _windows.ShowPopup()),
+            TrayMenuAction.ShowSettings => _windows.ShowSettingsAsync(),
             TrayMenuAction.RefreshAll => _polling.RefreshAllAsync(),
             TrayMenuAction.Exit => ExitAsync(),
             _ => Task.CompletedTask
@@ -134,7 +148,20 @@ public sealed class BatteryApplication : IAsyncDisposable
 
     private void OnSystemResumed(object? sender, EventArgs e)
     {
-        _ = _polling.RefreshAllAsync();
+        _ = RefreshAfterResumeAsync();
+    }
+
+    private async Task RefreshAfterResumeAsync()
+    {
+        try
+        {
+            await _selection.RefreshDiscoveryAsync().ConfigureAwait(false);
+            await _polling.RefreshAllAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _log.Log(BatterioLogLevel.Warning, "Resume refresh failed.", exception);
+        }
     }
 }
 

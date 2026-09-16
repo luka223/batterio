@@ -2,5 +2,5 @@ namespace Batterio.Core.Abstractions;
 
 public interface IBatteryAdapter : IAsyncDisposable
 {
-    Task<int> GetBatteryStatus(CancellationToken cancellationToken = default);
+    Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default);
 }

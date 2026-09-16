@@ -8,27 +8,48 @@ namespace Batterio.App.Windows;
 public enum TrayMenuAction
 {
     ShowPopup,
+    ShowSettings,
     RefreshAll,
     Exit
 }
 
 public sealed class WindowCoordinator : IWindowCoordinator
 {
+    private const nuint SettingsMenuCommandId = 1;
+    private const nuint CloseMenuCommandId = 2;
+
     private readonly ITrayService _tray;
+    private readonly DeviceSelectionCoordinator? _selection;
+    private readonly IServiceProvider? _services;
     private BatteryViewModel? _viewModel;
 
     private Window? _popupWindow;
+    private Window? _settingsWindow;
     private bool _showRequested;
     private bool _allowClose;
 
-    public WindowCoordinator(ITrayService tray)
+    public WindowCoordinator(
+        ITrayService tray,
+        DeviceSelectionCoordinator? selection = null,
+        IServiceProvider? services = null)
     {
-        _tray = tray;
+        _tray = tray ?? throw new ArgumentNullException(nameof(tray));
+        _selection = selection;
+        _services = services;
     }
 
     public event EventHandler<TrayMenuAction>? MenuActionRequested;
 
-    public void SetViewModel(BatteryViewModel viewModel) => _viewModel = viewModel;
+    public void SetViewModel(BatteryViewModel viewModel)
+    {
+        if (_viewModel is not null)
+        {
+            _viewModel.DevicesChanged -= OnDevicesChanged;
+        }
+
+        _viewModel = viewModel;
+        _viewModel.DevicesChanged += OnDevicesChanged;
+    }
 
     public void RegisterPopupWindow(Window window)
     {
@@ -89,9 +110,43 @@ public sealed class WindowCoordinator : IWindowCoordinator
         }
 
         _showRequested = true;
+        _ = RequestDiscoveryRefreshAsync();
         PositionPopup(_popupWindow);
         GetAppWindow(_popupWindow)?.Show();
         Activate(_popupWindow);
+    }
+
+    public async Task ShowSettingsAsync()
+    {
+        await MainThread.InvokeOnMainThreadAsync(() =>
+        {
+            if (_settingsWindow is { } existing)
+            {
+                GetAppWindow(existing)?.Show();
+                Activate(existing);
+                if (existing.Page?.BindingContext is SettingsViewModel existingViewModel)
+                {
+                    _ = existingViewModel.RefreshOnActivationAsync();
+                }
+
+                return;
+            }
+
+            var services = _services ?? Application.Current?.Handler?.MauiContext?.Services;
+            var viewModel = services?.GetService(typeof(SettingsViewModel)) as SettingsViewModel;
+            if (viewModel is null)
+            {
+                return;
+            }
+
+            var settings = new Window(new SettingsPage(viewModel)) { Title = "Batterio Settings" };
+            _settingsWindow = settings;
+            settings.Created += OnSettingsCreated;
+            settings.Activated += OnSettingsActivated;
+            settings.Destroying += OnSettingsDestroying;
+            Application.Current?.OpenWindow(settings);
+            _ = viewModel.InitializeAsync();
+        });
     }
 
     public void HidePopup()
@@ -125,7 +180,8 @@ public sealed class WindowCoordinator : IWindowCoordinator
         uint selected = 0;
         try
         {
-            if (!Win32Native.AppendMenu(menu, Win32Native.MF_STRING, 1, "Close"))
+            if (!Win32Native.AppendMenu(menu, Win32Native.MF_STRING, SettingsMenuCommandId, "Settings") ||
+                !Win32Native.AppendMenu(menu, Win32Native.MF_STRING, CloseMenuCommandId, "Close"))
             {
                 return;
             }
@@ -143,7 +199,11 @@ public sealed class WindowCoordinator : IWindowCoordinator
             Win32Native.PostMessage(handle, Win32Native.WM_NULL, 0, 0);
         }
 
-        if (selected == 1)
+        if (selected == SettingsMenuCommandId)
+        {
+            MenuActionRequested?.Invoke(this, TrayMenuAction.ShowSettings);
+        }
+        else if (selected == CloseMenuCommandId)
         {
             MenuActionRequested?.Invoke(this, TrayMenuAction.Exit);
         }
@@ -159,12 +219,98 @@ public sealed class WindowCoordinator : IWindowCoordinator
         _allowClose = true;
         await MainThread.InvokeOnMainThreadAsync(() =>
         {
+            if (_settingsWindow is not null)
+            {
+                Application.Current?.CloseWindow(_settingsWindow);
+            }
+
             if (_popupWindow is not null)
             {
                 Application.Current?.CloseWindow(_popupWindow);
                 _popupWindow = null;
             }
         });
+    }
+
+    private void OnDevicesChanged(object? sender, EventArgs e)
+    {
+        if (_popupWindow is { } popup && GetAppWindow(popup) is { IsVisible: true })
+        {
+            PositionPopup(popup);
+        }
+    }
+
+    private async Task RequestDiscoveryRefreshAsync()
+    {
+        if (_selection is null)
+        {
+            return;
+        }
+
+        try
+        {
+            await _selection.RefreshDiscoveryAsync().ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // Discovery errors are represented on the settings rows and do not prevent
+            // the popup from opening.
+        }
+    }
+
+    private void OnSettingsCreated(object? sender, EventArgs e)
+    {
+        if (sender is Window window)
+        {
+            ConfigureSettingsWindow(window);
+        }
+    }
+
+    private void OnSettingsActivated(object? sender, EventArgs e)
+    {
+        if (sender is Window { Page.BindingContext: SettingsViewModel viewModel })
+        {
+            _ = viewModel.RefreshOnActivationAsync();
+        }
+    }
+
+    private void OnSettingsDestroying(object? sender, EventArgs e)
+    {
+        if (sender is not Window window)
+        {
+            return;
+        }
+
+        window.Created -= OnSettingsCreated;
+        window.Activated -= OnSettingsActivated;
+        window.Destroying -= OnSettingsDestroying;
+        if (window.Page?.BindingContext is SettingsViewModel viewModel)
+        {
+            viewModel.Dispose();
+        }
+
+        if (ReferenceEquals(_settingsWindow, window))
+        {
+            _settingsWindow = null;
+        }
+    }
+
+    private void ConfigureSettingsWindow(Window window)
+    {
+        if (GetAppWindow(window) is not { } appWindow)
+        {
+            return;
+        }
+
+        appWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "batterio.ico"));
+        var presenter = OverlappedPresenter.Create();
+        presenter.IsResizable = true;
+        appWindow.SetPresenter(presenter);
+        appWindow.IsShownInSwitchers = true;
+        var scale = GetDpiScale(window);
+        appWindow.Resize(new global::Windows.Graphics.SizeInt32(
+            (int)Math.Round(560 * scale),
+            (int)Math.Round(440 * scale)));
     }
 
     private void OnPopupClosing(AppWindow sender, AppWindowClosingEventArgs args)
@@ -176,7 +322,7 @@ public sealed class WindowCoordinator : IWindowCoordinator
         }
     }
 
-    private double PopupHeight => Math.Clamp(114 + (_viewModel?.Devices.Count ?? 1) * 72, 210, 430);
+    private double PopupHeight => Math.Clamp(86 + (_viewModel?.Devices.Count ?? 1) * 72, 180, 430);
 
     private double PopupWidth
     {
@@ -185,10 +331,10 @@ public sealed class WindowCoordinator : IWindowCoordinator
             var devices = _viewModel?.Devices ?? [];
             var contentWidth = devices.Count == 0
                 ? 180
-                : devices.Max(device => 56 + 10 + (device.Name.Length * 7.5) + 10 + 42 + 10 + (device.StatusText.Length * 7.2));
+                : devices.Max(device => 56 + 10 + (device.Name.Length * 7.5) + 10 + 42 + 10 + (device.PercentageText.Length * 7.2));
 
-            // Include the page padding and keep the header and footer from becoming narrower
-            // than their own content when there are no device rows yet.
+            // Include the page padding and keep the header from becoming narrower than its
+            // own content when there are no device rows yet.
             return Math.Max(180, Math.Ceiling(contentWidth + 28));
         }
     }

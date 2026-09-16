@@ -11,16 +11,24 @@ public sealed class BatteryViewModel : INotifyPropertyChanged, IDisposable
     private readonly PollingCoordinator _polling;
     private string? _startupError;
     private bool _isRefreshing;
+    private long _lastSnapshotRevision;
 
     public BatteryViewModel(PollingCoordinator polling)
     {
         _polling = polling;
         Devices = new ObservableCollection<DeviceStateViewModel>();
         RefreshAllCommand = new Command(async () => await RefreshAllAsync());
-        _polling.StateChanged += OnStateChanged;
+        _polling.SnapshotChanged += OnSnapshotChanged;
+        var current = _polling.CurrentSnapshot;
+        if (current.Revision > 0)
+        {
+            ApplySnapshot(current);
+        }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+
+    public event EventHandler? DevicesChanged;
 
     public ObservableCollection<DeviceStateViewModel> Devices { get; }
 
@@ -69,7 +77,7 @@ public sealed class BatteryViewModel : INotifyPropertyChanged, IDisposable
 
     public void Dispose()
     {
-        _polling.StateChanged -= OnStateChanged;
+        _polling.SnapshotChanged -= OnSnapshotChanged;
     }
 
     private async Task RefreshAllAsync()
@@ -93,22 +101,65 @@ public sealed class BatteryViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
-    private void OnStateChanged(object? sender, DeviceBatteryStateChangedEventArgs e)
+    private void OnSnapshotChanged(object? sender, PollingSnapshotChangedEventArgs e)
     {
-        MainThread.BeginInvokeOnMainThread(() =>
+        MainThread.BeginInvokeOnMainThread(() => ApplySnapshot(e.Snapshot));
+    }
+
+    private void ApplySnapshot(PollingSnapshot snapshot)
+    {
+        if (snapshot.Revision <= _lastSnapshotRevision)
         {
-            var item = Devices.FirstOrDefault(device => string.Equals(device.Id, e.State.Configuration.Id, StringComparison.OrdinalIgnoreCase));
-            if (item is null)
+            return;
+        }
+
+        _lastSnapshotRevision = snapshot.Revision;
+        var previousIds = Devices.Select(device => device.Id).ToArray();
+        var statesById = snapshot.States.ToDictionary(
+            state => state.Configuration.Id,
+            StringComparer.OrdinalIgnoreCase);
+
+        for (var index = Devices.Count - 1; index >= 0; index--)
+        {
+            if (!statesById.ContainsKey(Devices[index].Id))
             {
-                Devices.Add(new DeviceStateViewModel(e.State));
+                Devices.RemoveAt(index);
+            }
+        }
+
+        for (var index = 0; index < snapshot.States.Count; index++)
+        {
+            var state = snapshot.States[index];
+            var existingIndex = -1;
+            for (var currentIndex = 0; currentIndex < Devices.Count; currentIndex++)
+            {
+                if (string.Equals(Devices[currentIndex].Id, state.Configuration.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    existingIndex = currentIndex;
+                    break;
+                }
+            }
+
+            if (existingIndex < 0)
+            {
+                Devices.Insert(Math.Min(index, Devices.Count), new DeviceStateViewModel(state));
             }
             else
             {
-                item.Update(e.State);
+                Devices[existingIndex].Update(state);
+                if (existingIndex != index)
+                {
+                    Devices.Move(existingIndex, Math.Min(index, Devices.Count - 1));
+                }
             }
+        }
 
-            OnPropertyChanged(nameof(HasNoDevices));
-        });
+        OnPropertyChanged(nameof(HasNoDevices));
+        var currentIds = Devices.Select(device => device.Id).ToArray();
+        if (!previousIds.SequenceEqual(currentIds, StringComparer.OrdinalIgnoreCase))
+        {
+            DevicesChanged?.Invoke(this, EventArgs.Empty);
+        }
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
@@ -118,11 +169,13 @@ public sealed class BatteryViewModel : INotifyPropertyChanged, IDisposable
 public sealed class DeviceStateViewModel : INotifyPropertyChanged
 {
     private DeviceBatteryState _state;
+    private BatteryPresentation _presentation;
 
     public DeviceStateViewModel(DeviceBatteryState state)
     {
         _state = state;
-        BatterySegments = CreateBatterySegments(state.LastValidPercentage);
+        _presentation = BatteryPresentationRules.Create(state.Reading);
+        BatterySegments = CreateBatterySegments();
         RefreshCommand = new Command(async () => await RefreshAsync());
     }
 
@@ -134,74 +187,47 @@ public sealed class DeviceStateViewModel : INotifyPropertyChanged
 
     public string Name => _state.Configuration.Name;
 
-    public string PhotoSource
-    {
-        get
-        {
-            try
-            {
-                var path = _state.Configuration.ResolvePhotoPath(
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Batterio"));
-                if (path is not null && File.Exists(path))
-                {
-                    return path;
-                }
+    public string PhotoSource => BatteryImageHelper.ResolveSource(_state.Configuration, IsOffline);
 
-                return GetFallbackImageSource();
-            }
-            catch (Exception)
-            {
-                return GetFallbackImageSource();
-            }
-        }
-    }
+    public string PercentageText => _presentation.PercentageText;
 
-    private string GetFallbackImageSource() => _state.Configuration.Id switch
-    {
-        "logitech-g-pro-x2-superstrike" => "mouse_generated.png",
-        "keychron-q1-he" => "keyboard_generated.png",
-        "logitech-g-pro-x2-lightspeed" => "lightspeed.webp",
-        _ => "battery_placeholder.scale-100.png"
-    };
+    public bool IsPercentageVisible => _presentation.IsPercentageVisible;
 
-    public string StatusText => _state.StatusText;
+    public bool IsCharging => _presentation.IsCharging;
 
-    public string DetailText => _state.Error ?? _state.RetrievalState switch
-    {
-        BatteryRetrievalState.Ready => FormatLastUpdate(_state.LastSuccessfulUpdate),
-        BatteryRetrievalState.Stale => $"Last successful update: {FormatLastUpdate(_state.LastSuccessfulUpdate)}",
-        BatteryRetrievalState.Disabled => "Device is disabled.",
-        BatteryRetrievalState.ConfigurationError => "Check the device adapter implementation.",
-        _ => "No successful reading yet."
-    };
+    public bool IsNotCharging => _presentation.State == BatteryChargeState.NotCharging;
 
-    public Color BatteryColor => _state.LastValidPercentage switch
-    {
-        > 40 => Color.FromArgb("#22C55E"),
-        >= 20 => Color.FromArgb("#EAB308"),
-        _ => Color.FromArgb("#EF4444")
-    };
+    public bool IsOffline => _presentation.IsOffline;
+
+    public bool IsNotOffline => !IsOffline;
+
+    public bool IsSegmentedBatteryVisible => IsNotCharging || IsOffline;
+
+    public Color BatteryColor => Color.FromArgb(_presentation.BatteryColorHex);
+
+    public Color ChargingColor => Color.FromArgb(BatteryPresentationRules.ChargingColorHex);
+
+    public Color ChargingBoltColor => Color.FromArgb("#14532D");
 
     public IReadOnlyList<BatterySegmentViewModel> BatterySegments { get; private set; }
 
-    public string BatteryDescription => $"{Name}: {StatusText}";
-
-    public bool HasReading => _state.LastValidPercentage.HasValue;
+    public string BatteryDescription =>
+        BatteryPresentationRules.GetAccessibilityDescription(Name, _state.Reading);
 
     public void Update(DeviceBatteryState state)
     {
         _state = state;
-        BatterySegments = CreateBatterySegments(state.LastValidPercentage);
+        _presentation = BatteryPresentationRules.Create(state.Reading);
+        BatterySegments = CreateBatterySegments();
         OnPropertyChanged(string.Empty);
     }
 
-    private BatterySegmentViewModel[] CreateBatterySegments(int? percentage)
-    {
-        var filledSegments = Math.Clamp(percentage.GetValueOrDefault() / 10, 0, 10);
-        return Enumerable.Range(0, 10)
-            .Select(index => new BatterySegmentViewModel(index < filledSegments, BatteryColor))
+    private BatterySegmentViewModel[] CreateBatterySegments() =>
+        Enumerable.Range(0, 10)
+            .Select(index => new BatterySegmentViewModel(
+                index < _presentation.FilledSegments,
+                BatteryColor))
             .ToArray();
-    }
 
     private async Task RefreshAsync()
     {
@@ -211,14 +237,8 @@ public sealed class DeviceStateViewModel : INotifyPropertyChanged
         }
     }
 
-    private static string FormatLastUpdate(DateTimeOffset? value) =>
-        value is null ? "No successful reading yet." : value.Value.ToLocalTime().ToString("g");
-
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
 
 public sealed record BatterySegmentViewModel(bool IsFilled, Color Color);
-
-
-

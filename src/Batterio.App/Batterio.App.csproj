@@ -5,6 +5,7 @@
     <RootNamespace>Batterio.App</RootNamespace>
     <AssemblyName>Batterio.App</AssemblyName>
     <UseMaui>true</UseMaui>
+    <MauiVersion>10.0.101</MauiVersion>
     <SingleProject>true</SingleProject>
     <ApplicationTitle>Batterio</ApplicationTitle>
     <ApplicationIcon>Resources\AppIcon\batterio.ico</ApplicationIcon>
@@ -15,14 +16,24 @@
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <TargetPlatformMinVersion>10.0.19041.0</TargetPlatformMinVersion>
     <MauiXamlInflator>SourceGen</MauiXamlInflator>
-    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == '' and '$(Configuration)' == 'Release'">win-x64</RuntimeIdentifier>
-    <SelfContained Condition="'$(Configuration)' == 'Release'">true</SelfContained>
-    <WindowsAppSDKSelfContained Condition="'$(Configuration)' == 'Release'">true</WindowsAppSDKSelfContained>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release'">
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Batterio.Core\Batterio.Core.csproj" />
     <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
     <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.106" PrivateAssets="all" />
   </ItemGroup>

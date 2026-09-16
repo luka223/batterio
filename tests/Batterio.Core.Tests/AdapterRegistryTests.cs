@@ -41,6 +41,35 @@ public sealed class AdapterRegistryTests
         Assert.Contains("not registered", exception.Message);
     }
 
+    [Fact]
+    public void ObsoleteKeychronConfigurationRemainsAnUnknownAdapter()
+    {
+        var registry = new AdapterRegistry(Array.Empty<IBatteryAdapterFactory>());
+        var exception = Assert.Throws<AdapterConfigurationException>(() => registry.CreateAdapter(new DeviceConfiguration
+        {
+            Id = "obsolete",
+            Name = "Obsolete",
+            AdapterId = "keychron-q1-he",
+            AdapterSettings = JsonDocument.Parse("{}").RootElement
+        }));
+
+        Assert.Contains("keychron-q1-he", exception.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("not registered", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void LogitechFactoriesValidateOptionalDevicePath()
+    {
+        var valid = JsonDocument.Parse("{\"devicePath\":\"receiver\"}").RootElement;
+        new LogitechGProX2SuperstrikeAdapterFactory().ValidateSettings(valid);
+        new LogitechGProX2LightspeedAdapterFactory().ValidateSettings(valid);
+
+        var exception = Assert.Throws<AdapterConfigurationException>(() =>
+            new LogitechGProX2LightspeedAdapterFactory().ValidateSettings(
+                JsonDocument.Parse("{\"devicePath\":\"\"}").RootElement));
+        Assert.Contains("devicePath", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static DeviceConfiguration Device(string id, string setting) => new()
     {
         Id = id,
@@ -64,7 +93,8 @@ public sealed class AdapterRegistryTests
 
     private sealed class TestAdapter : IBatteryAdapter
     {
-        public Task<int> GetBatteryStatus(CancellationToken cancellationToken = default) => Task.FromResult(50);
+        public Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new BatteryReading(50, BatteryChargeState.NotCharging));
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
 }

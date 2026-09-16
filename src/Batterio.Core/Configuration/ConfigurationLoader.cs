@@ -152,5 +152,7 @@ public sealed class ConfigurationPathProvider
 
     public string FilePath => Path.Combine(DirectoryPath, "devices.json");
 
+    public string SettingsFilePath => Path.Combine(DirectoryPath, "settings.json");
+
     public string LogsDirectoryPath => Path.Combine(DirectoryPath, "Logs");
 }
