@@ -237,7 +237,11 @@ if ($forbiddenLauncherImports) {
 $launcherInfo = Get-Item -LiteralPath $launcherPath
 $runtimeInfo = Get-Item -LiteralPath $runtimeExecutable
 $runtimeAssemblyInfo = Get-Item -LiteralPath $runtimeAssembly
-$launcherProductVersion = $launcherInfo.VersionInfo.ProductVersion
+$launcherVersionInfo = $launcherInfo.VersionInfo
+if ($launcherVersionInfo.FileDescription -ne "Batterio" -or $launcherVersionInfo.ProductName -ne "Batterio") {
+    throw "The launcher version metadata must identify the application as Batterio."
+}
+$launcherProductVersion = $launcherVersionInfo.ProductVersion
 $runtimeProductVersion = $runtimeInfo.VersionInfo.ProductVersion
 $runtimeAssemblyProductVersion = $runtimeAssemblyInfo.VersionInfo.ProductVersion
 $launcherHash = (Get-FileHash -LiteralPath $launcherPath -Algorithm SHA256).Hash

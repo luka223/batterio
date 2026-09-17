@@ -4,6 +4,9 @@
     <OutputType>WinExe</OutputType>
     <RootNamespace>Batterio.Startup</RootNamespace>
     <AssemblyName>Batterio.App</AssemblyName>
+    <AssemblyTitle>Batterio</AssemblyTitle>
+    <Product>Batterio</Product>
+    <Company>Batterio</Company>
     <ApplicationIcon>..\Batterio.App\Resources\AppIcon\batterio.ico</ApplicationIcon>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>

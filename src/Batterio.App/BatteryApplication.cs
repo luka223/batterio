@@ -12,7 +12,7 @@ public sealed class BatteryApplication : IAsyncDisposable
     private readonly ITrayService _tray;
     private readonly WindowCoordinator _windows;
     private readonly DeviceSelectionCoordinator _selection;
-    private readonly LowBatteryNotificationCoordinator _lowBatteryNotifications;
+    private readonly BatteryNotificationCoordinator _batteryNotifications;
     private readonly IBatterioLog _log;
     private readonly ILogger<BatteryApplication> _logger;
     private readonly RuntimeStartupSequence _startup;
@@ -26,7 +26,7 @@ public sealed class BatteryApplication : IAsyncDisposable
     public BatteryApplication(
         PollingCoordinator polling,
         DeviceSelectionCoordinator selection,
-        LowBatteryNotificationCoordinator lowBatteryNotifications,
+        BatteryNotificationCoordinator batteryNotifications,
         ITrayService tray,
         WindowCoordinator windows,
         IBatterioLog log,
@@ -34,7 +34,7 @@ public sealed class BatteryApplication : IAsyncDisposable
     {
         _polling = polling;
         _selection = selection;
-        _lowBatteryNotifications = lowBatteryNotifications;
+        _batteryNotifications = batteryNotifications;
         _tray = tray;
         _windows = windows;
         _log = log;
@@ -48,7 +48,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         _startup = new RuntimeStartupSequence(
             _windows.HidePopup,
             () => _tray.StartAsync(),
-            () => _lowBatteryNotifications.StartAsync(),
+            () => _batteryNotifications.StartAsync(),
             StartSelectionAndPollingAsync,
             exception => _log.Log(BatterioLogLevel.Critical, "Batterio failed to start.", exception));
     }
@@ -94,7 +94,7 @@ public sealed class BatteryApplication : IAsyncDisposable
     private async Task CleanupAsync()
     {
         await _selection.StopAsync().ConfigureAwait(false);
-        await _lowBatteryNotifications.StopAsync().ConfigureAwait(false);
+        await _batteryNotifications.StopAsync().ConfigureAwait(false);
         await _polling.StopAsync(TimeSpan.FromMilliseconds(750)).ConfigureAwait(false);
         await _tray.StopAsync().ConfigureAwait(false);
         await _windows.CloseAsync().ConfigureAwait(false);
@@ -106,7 +106,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         _tray.ActionRaised -= OnTrayAction;
         _tray.SystemResumed -= OnSystemResumed;
         _windows.MenuActionRequested -= OnMenuAction;
-        await _lowBatteryNotifications.DisposeAsync().ConfigureAwait(false);
+        await _batteryNotifications.DisposeAsync().ConfigureAwait(false);
         await _selection.DisposeAsync().ConfigureAwait(false);
         await _polling.DisposeAsync().ConfigureAwait(false);
         await _tray.DisposeAsync().ConfigureAwait(false);

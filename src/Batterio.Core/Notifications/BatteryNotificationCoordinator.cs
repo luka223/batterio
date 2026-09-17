@@ -4,9 +4,9 @@ using Batterio.Core.Abstractions;
 namespace Batterio.Core.Notifications;
 
 /// <summary>
-/// Turns successful low battery readings into at-most-once-per-run notification attempts.
+/// Turns successful battery readings into at-most-once-per-run notification attempts.
 /// </summary>
-public sealed class LowBatteryNotificationCoordinator : IAsyncDisposable
+public sealed class BatteryNotificationCoordinator : IAsyncDisposable
 {
     public const int LowBatteryThreshold = 30;
 
@@ -14,7 +14,8 @@ public sealed class LowBatteryNotificationCoordinator : IAsyncDisposable
     private readonly IBatteryNotificationService _notifications;
     private readonly IBatterioLog _log;
     private readonly object _gate = new();
-    private readonly HashSet<string> _notifiedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _lowBatteryNotifiedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _fullyChargedNotifiedDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private readonly Channel<NotificationRequest> _queue = Channel.CreateUnbounded<NotificationRequest>(
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly CancellationTokenSource _stopping = new();
@@ -24,7 +25,7 @@ public sealed class LowBatteryNotificationCoordinator : IAsyncDisposable
     private bool _accepting;
     private bool _disposed;
 
-    public LowBatteryNotificationCoordinator(
+    public BatteryNotificationCoordinator(
         PollingCoordinator polling,
         IBatteryNotificationService notifications,
         IBatterioLog? log = null)
@@ -104,21 +105,39 @@ public sealed class LowBatteryNotificationCoordinator : IAsyncDisposable
     private void OnStateChanged(object? sender, DeviceBatteryStateChangedEventArgs args)
     {
         var state = args.State;
-        if (!state.Configuration.Enabled || state.Error is not null || state.Percentage is not < LowBatteryThreshold)
+        var percentage = state.Percentage;
+        if (!state.Configuration.Enabled || state.Error is not null || percentage is null)
+        {
+            return;
+        }
+
+        var kind = percentage.Value < LowBatteryThreshold
+            ? NotificationKind.LowBattery
+            : percentage.Value == 100
+                ? NotificationKind.FullyCharged
+                : (NotificationKind?)null;
+        if (kind is null)
         {
             return;
         }
 
         lock (_gate)
         {
-            if (!_accepting || !_notifiedDeviceIds.Add(state.Configuration.Id))
+            var notifiedDeviceIds = kind.Value switch
+            {
+                NotificationKind.LowBattery => _lowBatteryNotifiedDeviceIds,
+                NotificationKind.FullyCharged => _fullyChargedNotifiedDeviceIds,
+                _ => throw new ArgumentOutOfRangeException(nameof(kind))
+            };
+            if (!_accepting || !notifiedDeviceIds.Add(state.Configuration.Id))
             {
                 return;
             }
 
-            if (!_queue.Writer.TryWrite(new NotificationRequest(state.Configuration.Id, state.Configuration.Name)))
+            if (!_queue.Writer.TryWrite(new NotificationRequest(state.Configuration.Id, state.Configuration.Name, kind.Value)))
             {
-                _log.Log(BatterioLogLevel.Warning, "A low-battery notification could not be queued.");
+                _log.Log(BatterioLogLevel.Warning,
+                    $"A {ToLogName(kind.Value)} notification could not be queued for device '{state.Configuration.Id}'.");
             }
         }
     }
@@ -131,11 +150,22 @@ public sealed class LowBatteryNotificationCoordinator : IAsyncDisposable
             {
                 try
                 {
-                    await _notifications.ShowLowBatteryAsync(request.DeviceId, request.DeviceName, _stopping.Token).ConfigureAwait(false);
+                    switch (request.Kind)
+                    {
+                        case NotificationKind.LowBattery:
+                            await _notifications.ShowLowBatteryAsync(request.DeviceId, request.DeviceName, _stopping.Token).ConfigureAwait(false);
+                            break;
+                        case NotificationKind.FullyCharged:
+                            await _notifications.ShowFullyChargedAsync(request.DeviceId, request.DeviceName, _stopping.Token).ConfigureAwait(false);
+                            break;
+                        default:
+                            throw new ArgumentOutOfRangeException(nameof(request.Kind));
+                    }
                 }
                 catch (Exception exception) when (exception is not OperationCanceledException || !_stopping.IsCancellationRequested)
                 {
-                    _log.Log(BatterioLogLevel.Warning, $"Could not display low-battery notification for '{request.DeviceId}'.", exception);
+                    _log.Log(BatterioLogLevel.Warning,
+                        $"Could not display {ToLogName(request.Kind)} notification for device '{request.DeviceId}'.", exception);
                 }
             }
         }
@@ -144,5 +174,18 @@ public sealed class LowBatteryNotificationCoordinator : IAsyncDisposable
         }
     }
 
-    private sealed record NotificationRequest(string DeviceId, string DeviceName);
+    private enum NotificationKind
+    {
+        LowBattery,
+        FullyCharged
+    }
+
+    private sealed record NotificationRequest(string DeviceId, string DeviceName, NotificationKind Kind);
+
+    private static string ToLogName(NotificationKind kind) => kind switch
+    {
+        NotificationKind.LowBattery => "low-battery",
+        NotificationKind.FullyCharged => "fully-charged",
+        _ => throw new ArgumentOutOfRangeException(nameof(kind))
+    };
 }

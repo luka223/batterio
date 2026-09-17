@@ -27,6 +27,27 @@ public sealed class WindowsNotificationTests
         Assert.Equal(WindowsToastRegistrationService.AppUserModelId, platform.ShownAppId);
     }
 
+    [Theory]
+    [InlineData("Mouse & <keyboard> \"quoted\" 'name'")]
+    [InlineData("Miš 🖱️")]
+    public async Task FullyChargedPayloadHasExactEscapedTextAndComActivation(string name)
+    {
+        var platform = new FakePlatform();
+        using var registration = Registration(platform);
+        await using var service = new WindowsBatteryNotificationService(registration, platform, new NullBatterioLog());
+        await service.InitializeAsync();
+        await service.ShowFullyChargedAsync("mouse", name);
+        var toast = XElement.Parse(Assert.Single(platform.Toasts));
+        Assert.Equal("foreground", (string?)toast.Attribute("activationType"));
+        Assert.Equal("fully-charged", (string?)toast.Attribute("launch"));
+        Assert.Equal(name + " battery is fully charged", Assert.Single(toast.Descendants("text")).Value);
+        Assert.Equal("ToastGeneric", (string?)Assert.Single(toast.Descendants("binding")).Attribute("template"));
+        Assert.Null(toast.Element("actions"));
+        Assert.Null(toast.Element("audio"));
+        Assert.Null(toast.Attribute("scenario"));
+        Assert.Equal(WindowsToastRegistrationService.AppUserModelId, platform.ShownAppId);
+    }
+
     [Fact]
     public void RegistrationIsIdempotentAndRepairsMovedExecutableOnNextRun()
     {
@@ -112,24 +133,34 @@ public sealed class WindowsNotificationTests
         Assert.Equal(1, calls);
         platform.Activated!(WindowsToastRegistrationService.AppUserModelId, "low-battery");
         Assert.Equal(2, calls);
+        platform.Activated!(WindowsToastRegistrationService.AppUserModelId, "fully-charged");
+        Assert.Equal(3, calls);
         activation.Stop();
         activation.RequestPopup();
         activation.SetReady(() => calls++);
-        Assert.Equal(2, calls);
+        Assert.Equal(3, calls);
     }
 
-    [Fact]
-    public async Task AsynchronousWindowsFailureIsLogged()
+    [Theory]
+    [InlineData(false, "low-battery")]
+    [InlineData(true, "fully-charged")]
+    public async Task AsynchronousWindowsFailureIsLoggedWithDeviceAndNotificationKind(bool fullyCharged, string expectedKind)
     {
         var platform = new FakePlatform();
         var log = new RecordingLog();
         using var registration = Registration(platform);
         await using var service = new WindowsBatteryNotificationService(registration, platform, log);
         await service.InitializeAsync();
-        await service.ShowLowBatteryAsync("mouse", "Mouse");
+        if (fullyCharged)
+            await service.ShowFullyChargedAsync("device-42", "Private device name");
+        else
+            await service.ShowLowBatteryAsync("device-42", "Private device name");
         var failure = new InvalidOperationException("Windows rejected the payload");
         platform.Failed!(failure);
         Assert.Same(failure, log.Exception);
+        Assert.Contains("device-42", log.Message);
+        Assert.Contains(expectedKind, log.Message);
+        Assert.DoesNotContain("Private device name", log.Message);
     }
 
     private static WindowsToastRegistrationService Registration(FakePlatform platform, string path = @"C:\Batterio.exe") =>
@@ -165,6 +196,11 @@ public sealed class WindowsNotificationTests
     private sealed class RecordingLog : IBatterioLog
     {
         public Exception? Exception;
-        public void Log(BatterioLogLevel level, string message, Exception? exception = null) => Exception = exception;
+        public string? Message;
+        public void Log(BatterioLogLevel level, string message, Exception? exception = null)
+        {
+            Message = message;
+            Exception = exception;
+        }
     }
 }

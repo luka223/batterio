@@ -38,19 +38,28 @@ public sealed class WindowsBatteryNotificationService : IBatteryNotificationServ
         return Task.CompletedTask;
     }
 
-    public Task ShowLowBatteryAsync(string deviceId, string deviceName, CancellationToken cancellationToken = default)
+    public Task ShowLowBatteryAsync(string deviceId, string deviceName, CancellationToken cancellationToken = default) =>
+        ShowAsync(deviceId, deviceName, "low-battery", $"{deviceName} battery level is below 30%", cancellationToken);
+
+    public Task ShowFullyChargedAsync(string deviceId, string deviceName, CancellationToken cancellationToken = default) =>
+        ShowAsync(deviceId, deviceName, "fully-charged", $"{deviceName} battery is fully charged", cancellationToken);
+
+    private Task ShowAsync(string deviceId, string deviceName, string notificationKind, string message,
+        CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
         ArgumentNullException.ThrowIfNull(deviceName);
         if (!_initialized) return Task.CompletedTask;
+
         // Foreground activation targets the registered COM activator, not a URI protocol.
         var xml = new XElement("toast", new XAttribute("activationType", "foreground"),
-            new XAttribute("launch", "low-battery"),
+            new XAttribute("launch", notificationKind),
             new XElement("visual", new XElement("binding", new XAttribute("template", "ToastGeneric"),
-                new XElement("text", $"{deviceName} battery level is below 30%")))).ToString(SaveOptions.DisableFormatting);
+                new XElement("text", message)))).ToString(SaveOptions.DisableFormatting);
         _platform.Show(WindowsToastRegistrationService.AppUserModelId, xml,
-            exception => _log.Log(BatterioLogLevel.Warning, $"Windows rejected the notification for '{deviceId}'.", exception));
+            exception => _log.Log(BatterioLogLevel.Warning,
+                $"Windows rejected the {notificationKind} notification for device '{deviceId}'.", exception));
         return Task.CompletedTask;
     }
 

@@ -37,7 +37,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IWindowsToastPlatform, WindowsToastPlatform>();
         builder.Services.AddSingleton<WindowsToastRegistrationService>();
         builder.Services.AddSingleton<IBatteryNotificationService, WindowsBatteryNotificationService>();
-        builder.Services.AddSingleton<LowBatteryNotificationCoordinator>();
+        builder.Services.AddSingleton<BatteryNotificationCoordinator>();
         builder.Services.AddSingleton<DeviceSelectionCoordinator>(services => new DeviceSelectionCoordinator(
             BuiltInDevices.Catalog,
             services.GetRequiredService<IUserSettingsStore>(),

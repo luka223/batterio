@@ -22,7 +22,7 @@ public sealed class NotificationRegressionTests
         fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(percentage, state));
         await fixture.Polling.RefreshDeviceAsync("one");
         await fixture.Barrier();
-        Assert.Equal(expected ? 1 : 0, fixture.Notifications.Calls.Count(id => id == "one"));
+        Assert.Equal(expected ? 1 : 0, fixture.Notifications.Calls.Count(call => call.DeviceId == "one" && call.Kind == "low-battery"));
     }
 
     [Fact]
@@ -30,21 +30,64 @@ public sealed class NotificationRegressionTests
     {
         await using var fixture = await Fixture.Start(firstReading: 29);
         await fixture.Barrier();
-        Assert.Single(fixture.Notifications.Calls, id => id == "one");
+        Assert.Single(fixture.Notifications.Calls, call => call.DeviceId == "one" && call.Kind == "low-battery");
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task RemovalOrDeselectionAndReselectionPreserveSuppression(bool deselection)
+    [InlineData(BatteryChargeState.Charging)]
+    [InlineData(BatteryChargeState.NotCharging)]
+    public async Task FirstReadingAlreadyFullyChargedIsNotMissed(BatteryChargeState chargeState)
     {
-        await using var fixture = await Fixture.Start(firstReading: 29);
+        await using var fixture = await Fixture.Start(firstReading: 100, firstChargeState: chargeState);
+        await fixture.Barrier();
+        Assert.Single(fixture.Notifications.Calls, call => call.DeviceId == "one" && call.Kind == "fully-charged");
+    }
+
+    [Theory]
+    [InlineData(99, BatteryChargeState.NotCharging, false)]
+    [InlineData(100, BatteryChargeState.Charging, true)]
+    [InlineData(100, BatteryChargeState.NotCharging, true)]
+    [InlineData(null, BatteryChargeState.NotCharging, false)]
+    [InlineData(null, BatteryChargeState.Offline, false)]
+    public async Task FullyChargedRequiresASuccessfulOneHundredPercentReading(
+        int? percentage, BatteryChargeState chargeState, bool expected)
+    {
+        await using var fixture = await Fixture.Start();
+        fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(percentage, chargeState));
+        await fixture.Polling.RefreshDeviceAsync("one");
+        await fixture.Barrier();
+        Assert.Equal(expected ? 1 : 0, fixture.Notifications.Calls.Count(
+            call => call.DeviceId == "one" && call.Kind == "fully-charged"));
+    }
+
+    [Fact]
+    public async Task DisabledDeviceCannotTriggerFullyChargedNotification()
+    {
+        await using var fixture = await Fixture.Start();
+        fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(100, BatteryChargeState.NotCharging));
+        await fixture.Polling.SetActiveDevicesAsync([Device("one", enabled: false)]);
+        await fixture.Polling.RefreshAllAsync();
+        await fixture.Barrier();
+        Assert.DoesNotContain(fixture.Notifications.Calls,
+            call => call.DeviceId == "one" && call.Kind == "fully-charged");
+    }
+
+    [Theory]
+    [InlineData(false, 29)]
+    [InlineData(true, 29)]
+    [InlineData(false, 100)]
+    [InlineData(true, 100)]
+    public async Task RemovalOrDeselectionAndReselectionPreserveSuppression(bool deselection, int firstReading)
+    {
+        await using var fixture = await Fixture.Start(firstReading);
         await fixture.Barrier();
         await fixture.Polling.SetActiveDevicesAsync(deselection ? [Device("one", false)] : []);
         await fixture.Polling.SetActiveDevicesAsync([Device("ONE")]);
         await fixture.Polling.RefreshDeviceAsync("ONE");
         await fixture.Barrier();
-        Assert.Single(fixture.Notifications.Calls, id => id.Equals("one", StringComparison.OrdinalIgnoreCase));
+        var kind = firstReading == 100 ? "fully-charged" : "low-battery";
+        Assert.Single(fixture.Notifications.Calls, call =>
+            call.DeviceId.Equals("one", StringComparison.OrdinalIgnoreCase) && call.Kind == kind);
     }
 
     [Fact]
@@ -57,31 +100,55 @@ public sealed class NotificationRegressionTests
             await fixture.Polling.RefreshDeviceAsync("one");
         }
         await fixture.Barrier();
-        Assert.Single(fixture.Notifications.Calls, id => id == "one");
+        Assert.Single(fixture.Notifications.Calls, call => call.DeviceId == "one" && call.Kind == "low-battery");
+    }
+
+    [Fact]
+    public async Task RepeatedOneHundredPercentReadingsDoNotRearmAfterDropOfflineOrManualRefresh()
+    {
+        await using var fixture = await Fixture.Start(firstReading: 100);
+        foreach (var reading in new[]
+        {
+            new BatteryReading(99, BatteryChargeState.NotCharging),
+            BatteryReading.Offline,
+            new BatteryReading(100, BatteryChargeState.Charging),
+            new BatteryReading(100, BatteryChargeState.NotCharging)
+        })
+        {
+            fixture.Factory.Read = (_, _) => Task.FromResult(reading);
+            await fixture.Polling.RefreshDeviceAsync("one");
+        }
+        await fixture.Barrier();
+        Assert.Single(fixture.Notifications.Calls, call => call.DeviceId == "one" && call.Kind == "fully-charged");
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task FailedOrCancelledAdapterCannotTriggerOrConsumeSuppression(bool cancelled)
+    [InlineData(false, 5, "low-battery")]
+    [InlineData(true, 5, "low-battery")]
+    [InlineData(false, 100, "fully-charged")]
+    [InlineData(true, 100, "fully-charged")]
+    public async Task FailedOrCancelledAdapterCannotTriggerOrConsumeSuppression(
+        bool cancelled, int successfulPercentage, string expectedKind)
     {
         await using var fixture = await Fixture.Start();
         fixture.Factory.Read = (_, _) => Task.FromException<BatteryReading>(cancelled
             ? new OperationCanceledException() : new InvalidOperationException("read failed"));
         await fixture.Polling.RefreshDeviceAsync("one");
         await fixture.Barrier();
-        Assert.DoesNotContain("one", fixture.Notifications.Calls);
+        Assert.DoesNotContain(fixture.Notifications.Calls, call => call.DeviceId == "one");
         Assert.NotNull(fixture.Polling.States.Single(s => s.Configuration.Id == "one").Error);
-        fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(5, BatteryChargeState.Charging));
+        fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(successfulPercentage, BatteryChargeState.Charging));
         await fixture.Polling.RefreshDeviceAsync("one");
         await fixture.Barrier();
-        Assert.Single(fixture.Notifications.Calls, id => id == "one");
+        Assert.Single(fixture.Notifications.Calls, call => call.DeviceId == "one" && call.Kind == expectedKind);
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task LateLowResultAfterTimeoutOrRetirementNeverNotifies(bool retired)
+    [InlineData(false, 5)]
+    [InlineData(true, 5)]
+    [InlineData(false, 100)]
+    [InlineData(true, 100)]
+    public async Task LateResultAfterTimeoutOrRetirementNeverNotifies(bool retired, int percentage)
     {
         await using var fixture = await Fixture.Start();
         var started = Signal();
@@ -100,27 +167,30 @@ public sealed class NotificationRegressionTests
                 Assert.NotNull(fixture.Polling.States.Single().Error);
             }
         }
-        finally { result.TrySetResult(new BatteryReading(5, BatteryChargeState.NotCharging)); }
+        finally { result.TrySetResult(new BatteryReading(percentage, BatteryChargeState.NotCharging)); }
         try { await refresh.WaitAsync(TimeSpan.FromSeconds(5)); } catch (OperationCanceledException) when (retired) { }
         // Drain worker retirement before checking the policy, not just a timing-based delay.
         await fixture.Polling.SetActiveDevicesAsync([]);
         await fixture.Factory.Disposed.Task.WaitAsync(TimeSpan.FromSeconds(5));
         await fixture.Barrier();
-        Assert.DoesNotContain("one", fixture.Notifications.Calls);
+        Assert.DoesNotContain(fixture.Notifications.Calls, call => call.DeviceId == "one");
     }
 
-    [Fact]
-    public async Task ConcurrentDevicesAndRefreshesDeliverOncePerId()
+    [Theory]
+    [InlineData(5, "low-battery")]
+    [InlineData(100, "fully-charged")]
+    public async Task ConcurrentDevicesAndRefreshesDeliverOncePerId(int percentage, string expectedKind)
     {
         await using var fixture = await Fixture.Start();
-        fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(5, BatteryChargeState.NotCharging));
+        fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(percentage, BatteryChargeState.NotCharging));
         var devices = Enumerable.Range(0, 12).Select(i => Device("device" + i)).ToArray();
         await fixture.Polling.SetActiveDevicesAsync(devices);
         await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => fixture.Polling.RefreshAllAsync()));
         await fixture.Barrier();
-        var calls = fixture.Notifications.Calls.Where(id => id.StartsWith("device", StringComparison.Ordinal)).ToArray();
+        var calls = fixture.Notifications.Calls.Where(call => call.DeviceId.StartsWith("device", StringComparison.Ordinal)).ToArray();
         Assert.Equal(12, calls.Length);
-        Assert.Equal(12, calls.Distinct().Count());
+        Assert.Equal(12, calls.Select(call => call.DeviceId).Distinct().Count());
+        Assert.All(calls, call => Assert.Equal(expectedKind, call.Kind));
     }
 
     [Fact]
@@ -169,7 +239,7 @@ public sealed class NotificationRegressionTests
         await fixture.Polling.RefreshDeviceAsync("one");
         await fixture.Polling.RefreshDeviceAsync("one");
         await fixture.Barrier();
-        Assert.Single(fixture.Notifications.Calls, id => id == "one");
+        Assert.Single(fixture.Notifications.Calls, call => call.DeviceId == "one" && call.Kind == "low-battery");
         Assert.Null(fixture.Polling.States.Single(s => s.Configuration.Id == "one").Error);
     }
 
@@ -180,7 +250,7 @@ public sealed class NotificationRegressionTests
         var notifications = new RecordingService { Initialize = _ => initialization.Task };
         var factory = new ScriptFactory();
         await using var polling = new PollingCoordinator(new AdapterRegistry([factory]));
-        await using var coordinator = new LowBatteryNotificationCoordinator(polling, notifications);
+        await using var coordinator = new BatteryNotificationCoordinator(polling, notifications);
         var start = coordinator.StartAsync();
         var stop = coordinator.StopAsync();
         Assert.False(stop.IsCompleted);
@@ -206,17 +276,18 @@ public sealed class NotificationRegressionTests
         public ScriptFactory Factory { get; } = new();
         public RecordingService Notifications { get; } = new();
         public PollingCoordinator Polling { get; }
-        public LowBatteryNotificationCoordinator Coordinator { get; }
+        public BatteryNotificationCoordinator Coordinator { get; }
         private int _barrier;
         private Fixture()
         {
             Polling = new(new AdapterRegistry([Factory]));
             Coordinator = new(Polling, Notifications);
         }
-        public static async Task<Fixture> Start(int firstReading = 80, bool initializationFails = false)
+        public static async Task<Fixture> Start(int firstReading = 80, bool initializationFails = false,
+            BatteryChargeState firstChargeState = BatteryChargeState.NotCharging)
         {
             var fixture = new Fixture();
-            fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(firstReading, BatteryChargeState.NotCharging));
+            fixture.Factory.Read = (_, _) => Task.FromResult(new BatteryReading(firstReading, firstChargeState));
             fixture.Notifications.InitializationFails = initializationFails;
             await fixture.Coordinator.StartAsync();
             await fixture.Polling.SetActiveDevicesAsync([Device("one")]);
@@ -254,7 +325,7 @@ public sealed class NotificationRegressionTests
     }
     private sealed class RecordingService : IBatteryNotificationService
     {
-        public ConcurrentQueue<string> Calls { get; } = new();
+        public ConcurrentQueue<NotificationCall> Calls { get; } = new();
         private readonly ConcurrentDictionary<string, TaskCompletionSource> _completed = new();
         public bool InitializationFails;
         public int DisposeCount;
@@ -263,12 +334,20 @@ public sealed class NotificationRegressionTests
         public TaskCompletionSource Completion(string id) => _completed.GetOrAdd(id, _ => Signal());
         public Task InitializeAsync(CancellationToken cancellationToken = default) => InitializationFails
             ? Task.FromException(new InvalidOperationException("registration failed")) : Initialize(cancellationToken);
-        public async Task ShowLowBatteryAsync(string deviceId, string deviceName, CancellationToken cancellationToken = default)
+        public Task ShowLowBatteryAsync(string deviceId, string deviceName, CancellationToken cancellationToken = default) =>
+            ShowAsync(deviceId, "low-battery", cancellationToken);
+
+        public Task ShowFullyChargedAsync(string deviceId, string deviceName, CancellationToken cancellationToken = default) =>
+            ShowAsync(deviceId, "fully-charged", cancellationToken);
+
+        private async Task ShowAsync(string deviceId, string kind, CancellationToken cancellationToken)
         {
-            Calls.Enqueue(deviceId);
+            Calls.Enqueue(new NotificationCall(deviceId, kind));
             await Deliver(deviceId, cancellationToken);
             Completion(deviceId).TrySetResult();
         }
         public ValueTask DisposeAsync() { Interlocked.Increment(ref DisposeCount); return ValueTask.CompletedTask; }
     }
+
+    private sealed record NotificationCall(string DeviceId, string Kind);
 }

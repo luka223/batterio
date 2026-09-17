@@ -23,7 +23,7 @@ Device visibility choices are stored at `%LocalAppData%\Batterio\settings.json`.
 
 It polls each active device at its configured interval (five minutes for the built-in devices). The popup refresh icon polls active devices immediately. Polling continues while the popup is hidden.
 
-When a successful device reading is below 30%, Batterio sends one native Windows notification for that device during the current application run: `{Device name} battery level is below 30%`. Notifications are per device ID, so refreshes, reconnects, and a recovery followed by another drop do not repeat the alert until Batterio restarts. Windows notification permissions and Do Not Disturb control whether Windows presents the submitted notification. Clicking it opens the existing Batterio popup.
+When a successful device reading is below 30%, Batterio sends one native Windows notification for that device during the current application run: `{Device name} battery level is below 30%`. When a device is first observed at 100%, Batterio sends `{Device name} battery is fully charged`; either `Charging` or `NotCharging` qualifies. The first successful 100% reading counts, including an initial reading during startup. Each notification type is sent once per device ID per application run. Repeated refreshes, a drop below 100%, reconnects, and deselection/reselection do not rearm the fully charged notification until Batterio restarts. The low battery notification follows the same once-per-run policy. Windows notification permissions and Do Not Disturb control whether Windows presents the submitted notification. Clicking either notification opens the existing Batterio popup.
 
 The popup sizes itself to the device content and grows with the device list up to a scrollable maximum height. Each device is shown on one row with a 52px photo, its name, a compact battery icon, and an optional percentage. Battery colors are green above 40%, yellow from 20% through 40%, and red below 20%. `Charging` uses a full green silhouette with a centered bolt; a Superstrike that reports a completed charge while external power is connected keeps the bolt visible at 100%. `NotCharging` uses ten segments; and `Offline` uses an empty gray battery and gray device presentation. An Offline result clears any prior percentage immediately, including while retries are in progress.
 
@@ -99,8 +99,11 @@ For manual toast checks on a Windows developer machine, run the published app on
 
 ```powershell
 dotnet run --project tests/Batterio.NotificationProbe -c Release -- notify
+dotnet run --project tests/Batterio.NotificationProbe -c Release -- notify-fully-charged
 dotnet run --project tests/Batterio.NotificationProbe -c Release -- activate
+dotnet run --project tests/Batterio.NotificationProbe -c Release -- activate-fully-charged
 dotnet run --project tests/Batterio.NotificationProbe -c Release -- history
+dotnet run --project tests/Batterio.NotificationProbe -c Release -- history-fully-charged
 ```
 
-`notify` submits one native test toast despite repeated low readings. Inspect the exact text, Batterio identity, Notification Center persistence, and click behavior while the app runs and after exiting it. `activate` directly exercises the COM callback and requests cold activation when needed; verify the process path as well as the return result. `history` reads back only the probe's test notifications from Windows notification history. These commands are manual diagnostics and do not replace clean-machine acceptance in the disposable VM.
+`notify` submits one native low battery test toast despite repeated low readings. `notify-fully-charged` submits one native fully charged test toast despite repeated 100% readings. Inspect the exact text, Batterio identity, Notification Center persistence, and click behavior while the app runs and after exiting it. `activate` and `activate-fully-charged` directly exercise the COM callback with each toast's launch argument and request cold activation when needed; verify the process path as well as the return result. `history` and `history-fully-charged` read back the matching probe toast from Windows notification history. These commands are manual diagnostics and do not replace clean-machine acceptance in the disposable VM.
