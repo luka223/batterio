@@ -26,11 +26,31 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     }
 
     [HardwareFact]
+    public async Task SuperstrikeWiredMouseCanBeEnumeratedOpenedAndQueried()
+    {
+        var provider = new WindowsHidCollectionProvider();
+        var query = LogitechReceiverDefinitions.SuperstrikeWiredQuery;
+        var collection = Assert.Single(provider.Enumerate(query));
+        Assert.True(query.Matches(collection));
+
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(
+            provider, new TestLog(output), collection.DevicePath);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var reading = await adapter.GetBatteryStatus(timeout.Token);
+
+        Assert.InRange(reading.Percentage ?? throw new Xunit.Sdk.XunitException("Wired battery response did not include a percentage."), 0, 100);
+        Assert.True(reading.ChargeState is BatteryChargeState.Charging or BatteryChargeState.NotCharging);
+    }
+
+    [HardwareFact]
     public async Task SuperstrikeReceiverCanBeEnumeratedOpenedAndQueried()
     {
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(new WindowsHidCollectionProvider(), new TestLog(output));
+        var provider = new WindowsHidCollectionProvider();
+        var collection = Assert.Single(provider.Enumerate(LogitechReceiverDefinitions.SuperstrikeReceiverQuery));
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider, new TestLog(output), collection.DevicePath);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        Assert.NotNull(await adapter.GetBatteryStatus(timeout.Token));
+        var reading = await adapter.GetBatteryStatus(timeout.Token);
+        Assert.True(reading.ChargeState is BatteryChargeState.Charging or BatteryChargeState.NotCharging);
     }
 
     [HardwareFact]
@@ -51,7 +71,7 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
         public HardwareFactAttribute()
         {
             if (!OperatingSystem.IsWindows() || Environment.GetEnvironmentVariable("BATTERIO_HARDWARE_TESTS") != "1")
-                Skip = "Requires Windows and attached powered-on receivers; opt in with BATTERIO_HARDWARE_TESTS=1.";
+                Skip = "Requires Windows and attached powered-on Logitech HID hardware; opt in with BATTERIO_HARDWARE_TESTS=1.";
         }
     }
 }

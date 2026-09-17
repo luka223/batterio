@@ -1,6 +1,6 @@
 # Batterio
 
-Batterio is a Windows 11 x64 .NET 10 / .NET MAUI tray battery monitor. The app ships with Logitech G Pro X2 Superstrike and Logitech G Pro X2 Lightspeed devices. Their adapters query the paired mouse/headset through the receiver and publish one of three states: `Charging`, `NotCharging`, or `Offline`, with an optional percentage for the first two.
+Batterio is a Windows 11 x64 .NET 10 / .NET MAUI tray battery monitor. The app ships with Logitech G Pro X2 Superstrike and Logitech G Pro X2 Lightspeed devices. The Superstrike adapter can query the mouse through its receiver or direct USB-C cable; the Lightspeed adapter queries its paired headset through the receiver. Adapters publish one of three states: `Charging`, `NotCharging`, or `Offline`, with an optional percentage for the first two.
 
 ## Build and run
 
@@ -17,15 +17,15 @@ The application runs entirely from the system tray, with no separate main window
 
 ## Devices and refresh
 
-Devices are defined in code in `src/Batterio.Core/Adapters/BuiltInDevices.cs`. A device is connected when its supported receiver HID collection is discovered; discovery never sends battery requests. Batterio scans at startup, when Settings or the popup opens, after resume, and every five seconds while running. The app does not create or load device configuration files.
+Devices are defined in code in `src/Batterio.Core/Adapters/BuiltInDevices.cs`. A device is connected when any supported HID collection is discovered; discovery never sends battery requests. Superstrike checks the direct USB-C endpoint first and falls back to its receiver only when no wired collection is present. Lightspeed uses its receiver. Batterio scans at startup, when Settings or the popup opens, after resume, and every five seconds while running. The app does not create or load device configuration files.
 
-Device visibility choices are stored at `%LocalAppData%\Batterio\settings.json`. Missing device IDs are selected by default, and choices for disconnected receivers are retained. Settings checkbox changes are saved immediately; there is no Apply button. Only selected, currently discovered receivers are polled, and removing a selection immediately removes its popup row and stops new queries.
+Device visibility choices are stored at `%LocalAppData%\Batterio\settings.json`. Missing device IDs are selected by default, and choices for disconnected devices are retained. Settings checkbox changes are saved immediately; there is no Apply button. Only selected, currently discovered devices are polled, and removing a selection immediately removes its popup row and stops new queries.
 
 It polls each active device at its configured interval (five minutes for the built-in devices). The popup refresh icon polls active devices immediately. Polling continues while the popup is hidden.
 
 When a successful device reading is below 30%, Batterio sends one native Windows notification for that device during the current application run: `{Device name} battery level is below 30%`. Notifications are per device ID, so refreshes, reconnects, and a recovery followed by another drop do not repeat the alert until Batterio restarts. Windows notification permissions and Do Not Disturb control whether Windows presents the submitted notification. Clicking it opens the existing Batterio popup.
 
-The popup sizes itself to the device content and grows with the device list up to a scrollable maximum height. Each device is shown on one row with a 52px photo, its name, a compact battery icon, and an optional percentage. Battery colors are green above 40%, yellow from 20% through 40%, and red below 20%. `Charging` uses a full green silhouette with a centered bolt; `NotCharging` uses ten segments; and `Offline` uses an empty gray battery and gray device presentation. An Offline result clears any prior percentage immediately, including while retries are in progress.
+The popup sizes itself to the device content and grows with the device list up to a scrollable maximum height. Each device is shown on one row with a 52px photo, its name, a compact battery icon, and an optional percentage. Battery colors are green above 40%, yellow from 20% through 40%, and red below 20%. `Charging` uses a full green silhouette with a centered bolt; a Superstrike that reports a completed charge while external power is connected keeps the bolt visible at 100%. `NotCharging` uses ten segments; and `Offline` uses an empty gray battery and gray device presentation. An Offline result clears any prior percentage immediately, including while retries are in progress.
 
 ## Diagnostics
 
@@ -42,7 +42,7 @@ Logs are written to `%LocalAppData%\Batterio\Logs\batterio.log` with up to two r
 5. Honor cancellation, release transport resources in `DisposeAsync`, and add contract tests for success, errors, timeout, cancellation, invalid values, and disposal.
 6. Register the factory explicitly in `MauiProgram` and add its device to `BuiltInDevices.Create()`. No JSON file is needed.
 
-Adapters must use cooperative cancellation. If a device ignores cancellation, Batterio marks the current reading Offline immediately but retains the adapter call's concurrency slot until it actually finishes; late results are discarded when the active device list is replaced. The built-in Logitech adapters accept an optional nonempty `devicePath` setting when more than one matching receiver collection is present. An explicit missing path is never replaced with another collection.
+Adapters must use cooperative cancellation. If a device ignores cancellation, Batterio marks the current reading Offline immediately but retains the adapter call's concurrency slot until it actually finishes; late results are discarded when the active device list is replaced. The built-in Logitech adapters accept an optional nonempty `devicePath` setting to select a specific supported HID++ endpoint. For Superstrike, that path can identify either the wired USB-C collection or the receiver collection; an explicit path overrides wired-first automatic selection, and an explicit missing path is never replaced with another endpoint.
 
 ## Publish
 
@@ -68,7 +68,7 @@ The launcher writes bounded startup diagnostics to `%LocalAppData%\Batterio\Logs
 
 On notification initialization, Batterio creates or repairs the current-user Start Menu shortcut with App ID `com.batterio.tray` and the existing toast activator CLSID. Its COM activation command targets `Batterio.App.exe` with `-ToastActivated`; notification clicks wait until the popup dispatcher is ready. The Run value name, App ID, tray GUID, and toast CLSID remain compatible with existing installations. These registrations intentionally remain after exit. When permanently removing the portable app, remove `%AppData%\Microsoft\Windows\Start Menu\Programs\Batterio.lnk` and `HKCU\Software\Classes\CLSID\{B68D18D7-6B67-4C24-993C-B597D789E895}`.
 
-Run automated tests with `dotnet test Batterio.sln -c Debug` and `dotnet test Batterio.sln -c Release`. Tests that communicate with real HID hardware remain opt-in. Destructive launcher, Explorer, sign-in, reboot, and Run-key upgrade scenarios belong in a disposable Windows 11 x64 VM. `tests/Batterio.StartupProbe` provides a self-contained runtime substitute for those launcher-attempt scenarios; it is excluded from the production publish.
+Run automated tests with `dotnet test Batterio.sln -c Debug` and `dotnet test Batterio.sln -c Release`. Tests that communicate with real HID hardware remain opt-in. Set `BATTERIO_HARDWARE_TESTS=1` to run the separate Superstrike wired USB-C and receiver smoke tests, which force the matching `devicePath`; the wired smoke test verifies a percentage and a charging state. Destructive launcher, Explorer, sign-in, reboot, and Run-key upgrade scenarios belong in a disposable Windows 11 x64 VM. `tests/Batterio.StartupProbe` provides a self-contained runtime substitute for those launcher-attempt scenarios; it is excluded from the production publish.
 
 The `publish` folder should be tested as a complete installation before distribution. The current Windows acceptance matrix and commands are recorded in [CHANGELOG.md](CHANGELOG.md).
 

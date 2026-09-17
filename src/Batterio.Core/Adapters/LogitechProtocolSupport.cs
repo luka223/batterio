@@ -65,6 +65,38 @@ internal static class LogitechErrors
     }, $"{protocol} feature error 0x{code:X2}.");
 }
 
+internal static class LogitechDeviceInformation
+{
+    public static bool TryGetModelIdForTransport(
+        IReadOnlyList<byte> parameters,
+        byte transportFlag,
+        out ushort modelId)
+    {
+        modelId = 0;
+        if (parameters.Count < 7 || transportFlag == 0 || (transportFlag & (transportFlag - 1)) != 0)
+        {
+            return false;
+        }
+
+        var transportBitmap = parameters[6];
+        if ((transportBitmap & transportFlag) == 0)
+        {
+            return false;
+        }
+
+        var precedingTransports = System.Numerics.BitOperations.PopCount(
+            (uint)(transportBitmap & (transportFlag - 1)));
+        var modelOffset = 7 + (2 * precedingTransports);
+        if (parameters.Count < modelOffset + 2)
+        {
+            return false;
+        }
+
+        modelId = (ushort)((parameters[modelOffset] << 8) | parameters[modelOffset + 1]);
+        return true;
+    }
+}
+
 internal static class LogitechAdapterSettings
 {
     public static string? ReadDevicePath(JsonElement settings, string adapterId)
@@ -242,6 +274,9 @@ public sealed class HidppClient
 
 public static class LogitechBatteryDecoding
 {
+    private const byte SuperstrikeChargeCompleteStatus = 0x03;
+    private const byte SuperstrikeExternalPowerConnectedStatus = 0x01;
+
     public static BatteryChargeState DecodeSuperstrikeStatus(byte status) => status switch
     {
         0x00 => BatteryChargeState.NotCharging,
@@ -298,6 +333,16 @@ public static class LogitechBatteryDecoding
         var chargeState = parameters.Count >= 3
             ? DecodeSuperstrikeStatus(parameters[2])
             : BatteryChargeState.NotCharging;
+        if (chargeState == BatteryChargeState.NotCharging &&
+            parameters.Count >= 4 &&
+            parameters[2] == SuperstrikeChargeCompleteStatus &&
+            parameters[3] == SuperstrikeExternalPowerConnectedStatus)
+        {
+            // A full battery reports "complete", but the external-power flag keeps the
+            // charging indicator visible while the mouse remains connected over USB.
+            chargeState = BatteryChargeState.Charging;
+        }
+
         return new BatteryReading(percentage, chargeState);
     }
 

@@ -65,7 +65,7 @@ public sealed class SettingsDiscoveryTests
         var second = Definition("second", 0x1001);
         var provider = new FakeHidProvider
         {
-            Collections = new[] { Collection(first.ReceiverQuery), Collection(first.ReceiverQuery) }
+            Collections = new[] { Collection(first.PresenceQueries[0]), Collection(first.PresenceQueries[0]) }
         };
         var registry = new AdapterRegistry(new[] { new TestFactory(first.AdapterId) });
         await using var discovery = new DeviceDiscoveryService(new[] { first, second }, registry, provider);
@@ -83,7 +83,7 @@ public sealed class SettingsDiscoveryTests
     public async Task DiscoveryFailureRetainsLastPresenceAndReportsTheError()
     {
         var definition = Definition("first", 0x1000);
-        var provider = new FakeHidProvider { Collections = new[] { Collection(definition.ReceiverQuery) } };
+        var provider = new FakeHidProvider { Collections = new[] { Collection(definition.PresenceQueries[0]) } };
         var registry = new AdapterRegistry(new[] { new TestFactory(definition.AdapterId) });
         await using var discovery = new DeviceDiscoveryService(new[] { definition }, registry, provider);
 
@@ -97,11 +97,55 @@ public sealed class SettingsDiscoveryTests
     }
 
     [Fact]
+    public async Task DiscoveryChecksPresenceQueriesInOrderAndStopsAfterTheFirstMatch()
+    {
+        var wiredQuery = Query(0xC0A8);
+        var receiverQuery = Query(0xC54D);
+        var definition = Definition("superstrike", wiredQuery, receiverQuery);
+        var registry = new AdapterRegistry(new[] { new TestFactory(definition.AdapterId) });
+        var wiredProvider = new FakeHidProvider { Collections = new[] { Collection(wiredQuery) } };
+        await using (var discovery = new DeviceDiscoveryService(new[] { definition }, registry, wiredProvider))
+        {
+            var snapshot = await discovery.DiscoverAsync();
+            Assert.True(Assert.Single(snapshot.Devices).IsPresent);
+            Assert.Equal(new ushort[] { 0xC0A8 }, wiredProvider.EnumeratedProductIds);
+            Assert.Equal(0, wiredProvider.Opens);
+        }
+
+        var receiverProvider = new FakeHidProvider { Collections = new[] { Collection(receiverQuery) } };
+        await using var receiverDiscovery = new DeviceDiscoveryService(new[] { definition }, registry, receiverProvider);
+        var receiverSnapshot = await receiverDiscovery.DiscoverAsync();
+        Assert.True(Assert.Single(receiverSnapshot.Devices).IsPresent);
+        Assert.Equal(new ushort[] { 0xC0A8, 0xC54D }, receiverProvider.EnumeratedProductIds);
+        Assert.Equal(0, receiverProvider.Opens);
+    }
+
+    [Fact]
+    public async Task MultiQueryFailureRetainsPresenceWhenNoQueryCanProveIt()
+    {
+        var wiredQuery = Query(0xC0A8);
+        var receiverQuery = Query(0xC54D);
+        var definition = Definition("superstrike", wiredQuery, receiverQuery);
+        var provider = new FakeHidProvider { Collections = new[] { Collection(receiverQuery) } };
+        var registry = new AdapterRegistry(new[] { new TestFactory(definition.AdapterId) });
+        await using var discovery = new DeviceDiscoveryService(new[] { definition }, registry, provider);
+
+        await discovery.DiscoverAsync();
+        provider.Collections = Array.Empty<HidCollectionInfo>();
+        provider.ThrowForProductIds.Add(wiredQuery.ProductId);
+        var failed = await discovery.DiscoverAsync();
+
+        var state = Assert.Single(failed.Devices);
+        Assert.True(state.IsPresent);
+        Assert.Contains("enumeration", state.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public async Task SelectionCoordinatorUsesThePresentAndSelectedIntersection()
     {
         using var fixture = new TempDirectory();
         var definition = Definition("first", 0x1000);
-        var collection = Collection(definition.ReceiverQuery);
+        var collection = Collection(definition.PresenceQueries[0]);
         var provider = new FakeHidProvider { Collections = new[] { collection } };
         var factory = new TestFactory(definition.AdapterId);
         var registry = new AdapterRegistry(new[] { factory });
@@ -129,21 +173,26 @@ public sealed class SettingsDiscoveryTests
         await Eventually(() => polling.States.Count == 1);
     }
 
-    private static BuiltInDeviceDefinition Definition(string id, ushort vendorId) => new()
+    private static BuiltInDeviceDefinition Definition(string id, ushort vendorId) =>
+        Definition(id, Query(vendorId));
+
+    private static BuiltInDeviceDefinition Definition(string id, params HidCollectionQuery[] queries) => new()
     {
         Id = id,
         Name = id,
         AdapterId = id,
-        ReceiverQuery = new HidCollectionQuery
-        {
-            VendorId = vendorId,
-            ProductId = 0x2000,
-            InterfaceNumber = 1,
-            UsagePage = 0xFF00,
-            Usage = 1,
-            MinimumReportLength = 20,
-            RequiredReportId = 0x11
-        }
+        PresenceQueries = queries
+    };
+
+    private static HidCollectionQuery Query(ushort productId) => new()
+    {
+        VendorId = 0x046D,
+        ProductId = productId,
+        InterfaceNumber = 1,
+        UsagePage = 0xFF00,
+        Usage = 1,
+        MinimumReportLength = 20,
+        RequiredReportId = 0x11
     };
 
     private static HidCollectionInfo Collection(HidCollectionQuery query) => new()
@@ -176,14 +225,19 @@ public sealed class SettingsDiscoveryTests
 
         public bool ThrowOnEnumerate { get; set; }
 
+        public HashSet<ushort> ThrowForProductIds { get; } = new();
+
         public int Enumerations { get; private set; }
+
+        public List<ushort> EnumeratedProductIds { get; } = new();
 
         public int Opens { get; private set; }
 
         public IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query)
         {
             Enumerations++;
-            if (ThrowOnEnumerate)
+            EnumeratedProductIds.Add(query.ProductId);
+            if (ThrowOnEnumerate || ThrowForProductIds.Contains(query.ProductId))
             {
                 throw new InvalidOperationException("enumeration failed");
             }

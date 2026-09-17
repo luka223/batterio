@@ -216,26 +216,52 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         {
             cancellationToken.ThrowIfCancellationRequested();
             DeviceDiscoveryState next;
-            try
+            Exception? enumerationFailure = null;
+            var isPresent = false;
+            foreach (var query in definition.PresenceQueries)
             {
-                var collections = _provider.Enumerate(definition.ReceiverQuery) ?? Array.Empty<HidCollectionInfo>();
-                var present = collections.Any(definition.ReceiverQuery.Matches);
+                try
+                {
+                    var collections = _provider.Enumerate(query) ?? Array.Empty<HidCollectionInfo>();
+                    if (collections.Any(query.Matches))
+                    {
+                        isPresent = true;
+                        break;
+                    }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    enumerationFailure ??= exception;
+                }
+            }
+
+            if (isPresent)
+            {
                 next = new DeviceDiscoveryState
                 {
                     Device = definition,
-                    IsPresent = present,
+                    IsPresent = true,
                     Error = null
                 };
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            else if (enumerationFailure is not null)
             {
                 var previous = GetState(definition.Id);
-                var message = string.IsNullOrWhiteSpace(exception.Message)
-                    ? exception.GetType().Name
-                    : exception.Message;
+                var message = string.IsNullOrWhiteSpace(enumerationFailure.Message)
+                    ? enumerationFailure.GetType().Name
+                    : enumerationFailure.Message;
                 next = previous with { Error = message };
                 _log.Log(BatterioLogLevel.Error,
-                    $"Could not discover receiver for '{definition.Id}'.", exception);
+                    $"Could not determine whether device '{definition.Id}' is present.", enumerationFailure);
+            }
+            else
+            {
+                next = new DeviceDiscoveryState
+                {
+                    Device = definition,
+                    IsPresent = false,
+                    Error = null
+                };
             }
 
             nextStates[definition.Id] = next;

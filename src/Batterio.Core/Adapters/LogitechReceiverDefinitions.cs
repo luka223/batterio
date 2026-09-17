@@ -10,7 +10,7 @@ public sealed record BuiltInDeviceDefinition
 
     public required string AdapterId { get; init; }
 
-    public required HidCollectionQuery ReceiverQuery { get; init; }
+    public required IReadOnlyList<HidCollectionQuery> PresenceQueries { get; init; }
 
     public DeviceConfiguration CreateConfiguration() => new()
     {
@@ -23,12 +23,23 @@ public sealed record BuiltInDeviceDefinition
 
 public static class LogitechReceiverDefinitions
 {
-    public static readonly HidCollectionQuery SuperstrikeQuery = new()
+    public static readonly HidCollectionQuery SuperstrikeReceiverQuery = new()
     {
         VendorId = LogitechGProX2SuperstrikeAdapter.VendorId,
-        ProductId = LogitechGProX2SuperstrikeAdapter.ProductId,
+        ProductId = LogitechGProX2SuperstrikeAdapter.ReceiverProductId,
         InterfaceNumber = LogitechGProX2SuperstrikeAdapter.InterfaceNumber,
         UsagePage = 0xFF00,
+        MinimumReportLength = 20,
+        RequiredReportId = 0x11
+    };
+
+    public static readonly HidCollectionQuery SuperstrikeWiredQuery = new()
+    {
+        VendorId = LogitechGProX2SuperstrikeAdapter.VendorId,
+        ProductId = LogitechGProX2SuperstrikeAdapter.WiredProductId,
+        InterfaceNumber = LogitechGProX2SuperstrikeAdapter.InterfaceNumber,
+        UsagePage = 0xFF00,
+        Usage = 0x0002,
         MinimumReportLength = 20,
         RequiredReportId = 0x11
     };

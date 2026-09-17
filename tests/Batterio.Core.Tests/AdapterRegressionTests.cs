@@ -60,6 +60,120 @@ public sealed class AdapterRegressionTests
         Assert.Equal("long", provider.Sessions.Single().Collection.DevicePath);
     }
 
+    [Fact]
+    public async Task WiredMouseUsesDeviceIndexFFAndSelectsUsbModelFromTheTransportBitmap()
+    {
+        var provider = new ScriptProvider(WiredMouse(), request => MouseReply(request));
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+
+        var reading = await adapter.GetBatteryStatus();
+
+        Assert.Equal(15, reading.Percentage);
+        Assert.Equal(BatteryChargeState.Charging, reading.ChargeState);
+        Assert.Equal("wired", provider.Sessions.Single().Collection.DevicePath);
+        Assert.All(provider.Writes, request => Assert.Equal(0xFF, request[1]));
+        Assert.All(provider.Writes, request => Assert.Equal(0x11, request[0]));
+        Assert.Equal(
+            new[] { (0xFF, 0x00, 0x11), (0xFF, 0x00, 0x01), (0xFF, 0x03, 0x01), (0xFF, 0x00, 0x01), (0xFF, 0x09, 0x01), (0xFF, 0x09, 0x11) },
+            provider.Writes.Select(request => ((int)request[1], (int)request[2], (int)request[3])));
+    }
+
+    [Theory]
+    [InlineData(86, 0x01, BatteryChargeState.Charging)]
+    [InlineData(86, 0x02, BatteryChargeState.Charging)]
+    [InlineData(100, 0x00, BatteryChargeState.NotCharging)]
+    [InlineData(100, 0x03, BatteryChargeState.NotCharging)]
+    [InlineData(100, 0x04, BatteryChargeState.NotCharging)]
+    [InlineData(0, 0x05, BatteryChargeState.Offline)]
+    [InlineData(0, 0x06, BatteryChargeState.Offline)]
+    public async Task WiredMouseKeepsUnifiedBatteryStatusMappings(byte percentage, byte status, BatteryChargeState expected)
+    {
+        var provider = new ScriptProvider(WiredMouse(), request => MouseReply(request, percentage, chargeStatus: status));
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+
+        var reading = await adapter.GetBatteryStatus();
+
+        Assert.Equal(expected, reading.ChargeState);
+        if (expected == BatteryChargeState.Offline)
+        {
+            Assert.Null(reading.Percentage);
+        }
+        else
+        {
+            Assert.Equal((int)percentage, reading.Percentage);
+        }
+        Assert.All(provider.Writes, request => Assert.Equal(0xFF, request[1]));
+    }
+
+    [Theory]
+    [InlineData(0x0C, 0x1234)]
+    [InlineData(0x04, 0xC0A8)]
+    public async Task WiredMouseRejectsWrongOrMissingUsbModelId(byte transportBitmap, ushort usbModelId)
+    {
+        var provider = new ScriptProvider(WiredMouse(), request =>
+            MouseReply(request, transportBitmap: transportBitmap, usbModelId: usbModelId))
+        {
+            Collections = new[] { Mouse(), WiredMouse() }
+        };
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+
+        var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
+
+        Assert.Equal(BatteryAdapterErrorKind.UnsupportedCapability, error.Kind);
+        Assert.Equal(3, provider.Writes.Count);
+        Assert.All(provider.Writes, request => Assert.Equal(0xFF, request[1]));
+    }
+
+    [Fact]
+    public async Task WiredMouseTakesPriorityWhenReceiverIsAlsoPresent()
+    {
+        var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
+        {
+            Collections = new[] { Mouse(), WiredMouse() }
+        };
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+
+        Assert.Equal("wired", provider.Sessions.Single().Collection.DevicePath);
+        Assert.All(provider.Writes, request => Assert.Equal(0xFF, request[1]));
+    }
+
+    [Theory]
+    [InlineData("MOUSE", (byte)0x01, "mouse")]
+    [InlineData("WIRED", (byte)0xFF, "wired")]
+    public async Task ExplicitPathSelectsItsExactReceiverOrWiredEndpoint(string path, byte expectedDeviceIndex, string expectedCollection)
+    {
+        var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
+        {
+            Collections = new[] { Mouse(), WiredMouse() }
+        };
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider, devicePath: path);
+
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+
+        Assert.Equal(expectedCollection, provider.Sessions.Single().Collection.DevicePath);
+        Assert.All(provider.Writes, request => Assert.Equal(expectedDeviceIndex, request[1]));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task MultipleCollectionsInTheSelectedModeAreAmbiguous(bool wired)
+    {
+        var collection = wired ? WiredMouse() : Mouse();
+        var provider = new ScriptProvider(collection, request => MouseReply(request))
+        {
+            Collections = new[] { collection, collection with { DevicePath = collection.DevicePath + "-2" } }
+        };
+        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+
+        var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
+
+        Assert.Equal(BatteryAdapterErrorKind.ReceiverAmbiguous, error.Kind);
+        Assert.Empty(provider.Sessions);
+    }
+
     [Theory]
     [InlineData(0, 0)]
     [InlineData(15, 15)]
@@ -144,14 +258,17 @@ public sealed class AdapterRegressionTests
         Assert.Contains(provider.Writes, r => r[1] == 2);
     }
 
-    [Fact]
-    public async Task OverallDeadlineCancelsProbingAndClosesSession()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task OverallDeadlineCancelsProbingAndClosesSession(bool wired)
     {
-        var provider = new ScriptProvider(Mouse(), _ => null);
+        var provider = new ScriptProvider(wired ? WiredMouse() : Mouse(), _ => null);
         await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
         using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetBatteryStatus(deadline.Token));
         Assert.Single(provider.Writes);
+        Assert.Equal((byte)(wired ? 0xFF : 1), provider.Writes.Single()[1]);
         Assert.Equal(1, provider.Closed);
         Assert.Equal(1, provider.TransactionsClosed);
     }
@@ -181,9 +298,10 @@ public sealed class AdapterRegressionTests
     [Fact]
     public async Task SamePathInstancesSerializeAndRecoverAfterCancellation()
     {
-        var provider = new ScriptProvider(Mouse(), _ => null);
+        var collection = WiredMouse();
+        var provider = new ScriptProvider(collection, _ => null);
         await using var first = new LogitechGProX2SuperstrikeAdapter(provider);
-        await using var second = new LogitechGProX2SuperstrikeAdapter(provider, devicePath: "MOUSE");
+        await using var second = new LogitechGProX2SuperstrikeAdapter(provider, devicePath: collection.DevicePath.ToUpperInvariant());
         using var firstCancel = new CancellationTokenSource();
         using var waitingCancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var active = first.GetBatteryStatus(firstCancel.Token);
@@ -194,6 +312,7 @@ public sealed class AdapterRegressionTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => active);
         provider.Respond = r => MouseReply(r);
         Assert.Equal(15, (await second.GetBatteryStatus()).Percentage);
+        Assert.All(provider.Writes, request => Assert.Equal(0xFF, request[1]));
         Assert.Equal(2, provider.Closed);
         Assert.Equal(1, provider.MaximumOpen);
     }
@@ -201,12 +320,13 @@ public sealed class AdapterRegressionTests
     [Fact]
     public async Task ReconnectionRediscoversChangedFeatureIndices()
     {
-        var provider = new ScriptProvider(Mouse(), r => MouseReply(r));
+        var provider = new ScriptProvider(WiredMouse(), r => MouseReply(r));
         await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
         provider.Respond = r => MouseReply(r, 80, true, 12, 25);
         Assert.Equal(80, (await adapter.GetBatteryStatus()).Percentage);
         Assert.Contains(provider.Writes, r => r[2] == 25 && r[3] == 0x11);
+        Assert.All(provider.Writes, request => Assert.Equal(0xFF, request[1]));
         Assert.Equal(2, provider.Closed);
     }
 
@@ -236,15 +356,18 @@ public sealed class AdapterRegressionTests
         Assert.Equal(2, provider.Closed);
     }
 
-    [Fact]
-    public async Task DisposingAdapterCancelsItsPendingRead()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DisposingAdapterCancelsItsPendingRead(bool wired)
     {
-        var provider = new ScriptProvider(Mouse(), _ => null);
+        var provider = new ScriptProvider(wired ? WiredMouse() : Mouse(), _ => null);
         var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
         var pending = adapter.GetBatteryStatus();
         await provider.Opened.Task;
         await adapter.DisposeAsync();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => pending);
+        Assert.Equal((byte)(wired ? 0xFF : 1), provider.Writes.Single()[1]);
         Assert.Equal(1, provider.Closed);
         await Assert.ThrowsAsync<ObjectDisposedException>(() => adapter.GetBatteryStatus());
     }
@@ -252,7 +375,10 @@ public sealed class AdapterRegressionTests
     [Fact]
     public async Task ExplicitMissingPathNeverOpensAnotherReceiver()
     {
-        var provider = new ScriptProvider(Mouse(), r => MouseReply(r));
+        var provider = new ScriptProvider(Mouse(), r => MouseReply(r))
+        {
+            Collections = new[] { Mouse(), WiredMouse() }
+        };
         await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider, devicePath: "missing");
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
         Assert.Equal(BatteryAdapterErrorKind.ReceiverMissing, error.Kind);
@@ -294,6 +420,19 @@ public sealed class AdapterRegressionTests
         SupportedReportIds = new HashSet<byte> { 0x10, 0x11 }
     };
 
+    private static HidCollectionInfo WiredMouse() => new()
+    {
+        DevicePath = "wired",
+        VendorId = 0x046D,
+        ProductId = 0xC0A8,
+        InterfaceNumber = 2,
+        UsagePage = 0xFF00,
+        Usage = 0x0002,
+        InputReportLength = 20,
+        OutputReportLength = 20,
+        SupportedReportIds = new HashSet<byte> { 0x11 }
+    };
+
     private static HidCollectionInfo Headset() => new()
     {
         DevicePath = "headset",
@@ -307,7 +446,15 @@ public sealed class AdapterRegressionTests
         SupportedReportIds = new HashSet<byte> { 0x51 }
     };
 
-    private static byte[] MouseReply(byte[] request, byte percentage = 15, bool percentageSupported = true, byte identity = 3, byte battery = 9)
+    private static byte[] MouseReply(
+        byte[] request,
+        byte percentage = 15,
+        bool percentageSupported = true,
+        byte identity = 3,
+        byte battery = 9,
+        byte transportBitmap = 0x0C,
+        ushort usbModelId = 0xC0A8,
+        byte chargeStatus = 0x02)
     {
         var response = new byte[20];
         request.AsSpan(0, 4).CopyTo(response);
@@ -324,9 +471,11 @@ public sealed class AdapterRegressionTests
         else if (request[2] == identity && request[3] == 1)
         {
             response[0] = 0x11;
-            response[10] = 4;
+            response[10] = transportBitmap;
             response[11] = 0x40;
             response[12] = 0xBD;
+            response[13] = (byte)(usbModelId >> 8);
+            response[14] = (byte)usbModelId;
         }
         else if (request[2] == battery && request[3] == 1)
         {
@@ -338,7 +487,7 @@ public sealed class AdapterRegressionTests
             Assert.Equal(battery, request[2]);
             Assert.Equal(0x11, request[3]);
             response[4] = percentage;
-            response[6] = 2;
+            response[6] = chargeStatus;
         }
         return response;
     }

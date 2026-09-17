@@ -10,14 +10,18 @@ public static class BuiltInDevices
             Id = "logitech-g-pro-x2-superstrike",
             Name = "Logitech G Pro X2 Superstrike",
             AdapterId = "logitech-g-pro-x2-superstrike",
-            ReceiverQuery = LogitechReceiverDefinitions.SuperstrikeQuery
+            PresenceQueries =
+            [
+                LogitechReceiverDefinitions.SuperstrikeWiredQuery,
+                LogitechReceiverDefinitions.SuperstrikeReceiverQuery
+            ]
         },
         new BuiltInDeviceDefinition
         {
             Id = "logitech-g-pro-x2-lightspeed",
             Name = "Logitech G Pro X2 Lightspeed",
             AdapterId = "logitech-g-pro-x2-lightspeed",
-            ReceiverQuery = LogitechReceiverDefinitions.LightspeedQuery
+            PresenceQueries = [LogitechReceiverDefinitions.LightspeedQuery]
         }
     ];
 

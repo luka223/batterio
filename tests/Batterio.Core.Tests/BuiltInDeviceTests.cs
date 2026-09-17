@@ -7,6 +7,27 @@ namespace Batterio.Core.Tests;
 public sealed class BuiltInDeviceTests
 {
     [Fact]
+    public void SuperstrikePresenceQueriesPreferWiredUsbAndLightspeedKeepsItsReceiverQuery()
+    {
+        var superstrike = BuiltInDevices.Catalog.Single(device => device.Id == "logitech-g-pro-x2-superstrike");
+        var wired = superstrike.PresenceQueries[0];
+        var receiver = superstrike.PresenceQueries[1];
+        var lightspeed = BuiltInDevices.Catalog.Single(device => device.Id == "logitech-g-pro-x2-lightspeed");
+
+        Assert.Equal(2, superstrike.PresenceQueries.Count);
+        Assert.Equal((ushort)0x046D, wired.VendorId);
+        Assert.Equal((ushort)0xC0A8, wired.ProductId);
+        Assert.Equal((ushort)2, wired.InterfaceNumber);
+        Assert.Equal((ushort)0xFF00, wired.UsagePage);
+        Assert.Equal((ushort)0x0002, wired.Usage);
+        Assert.Equal(20, wired.MinimumReportLength);
+        Assert.Equal((byte)0x11, wired.RequiredReportId);
+        Assert.Equal((ushort)0xC54D, receiver.ProductId);
+        Assert.Single(lightspeed.PresenceQueries);
+        Assert.Same(LogitechReceiverDefinitions.LightspeedQuery, lightspeed.PresenceQueries[0]);
+    }
+
+    [Fact]
     public async Task BuiltInDevicesContainOnlyTheTwoLogitechAdapters()
     {
         var devices = BuiltInDevices.Create();

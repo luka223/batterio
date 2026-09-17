@@ -72,6 +72,11 @@ function Invoke-Publish {
     }
 }
 
+& dotnet restore Batterio.sln --configfile NuGet.Config --runtime $RuntimeIdentifier
+if ($LASTEXITCODE -ne 0) {
+    throw "dotnet restore failed with exit code $LASTEXITCODE."
+}
+
 Invoke-Publish "src\Batterio.App\Batterio.App.csproj" $runtimeStage
 Invoke-Publish "src\Batterio.Startup\Batterio.Startup.csproj" $launcherStage -NativeAot
 

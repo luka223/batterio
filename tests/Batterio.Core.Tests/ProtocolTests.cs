@@ -36,6 +36,26 @@ public sealed partial class ProtocolTests
     }
 
     [Theory]
+    [InlineData(0x03, 0x01, BatteryChargeState.Charging)]
+    [InlineData(0x03, 0x00, BatteryChargeState.NotCharging)]
+    [InlineData(0x03, 0x02, BatteryChargeState.NotCharging)]
+    [InlineData(0x04, 0x01, BatteryChargeState.NotCharging)]
+    [InlineData(0x01, 0x01, BatteryChargeState.Charging)]
+    public void SuperstrikeShowsChargingWhenFullAndExternalPowerIsConnected(
+        byte status,
+        byte externalPowerStatus,
+        BatteryChargeState expected)
+    {
+        var reading = LogitechBatteryDecoding.DecodeSuperstrike(
+            new byte[] { 100, 0x08, status, externalPowerStatus });
+        var presentation = BatteryPresentationRules.Create(reading);
+
+        Assert.Equal(expected, reading.ChargeState);
+        Assert.Equal(expected == BatteryChargeState.Charging, presentation.IsCharging);
+        Assert.Equal("100%", presentation.PercentageText);
+    }
+
+    [Theory]
     [InlineData(0x03, false)]
     [InlineData(0x04, true)]
     [InlineData(0x05, true)]
@@ -204,7 +224,7 @@ public sealed partial class ProtocolTests
         {
             DevicePath = "mouse-receiver",
             VendorId = LogitechGProX2SuperstrikeAdapter.VendorId,
-            ProductId = LogitechGProX2SuperstrikeAdapter.ProductId,
+            ProductId = LogitechGProX2SuperstrikeAdapter.ReceiverProductId,
             InterfaceNumber = LogitechGProX2SuperstrikeAdapter.InterfaceNumber,
             UsagePage = 0xFF00,
             InputReportLength = 20,
@@ -214,8 +234,8 @@ public sealed partial class ProtocolTests
         var transaction = new FixtureTransaction(
             HidppResponse(1, 0, 0x10, 1, new byte[] { 2, 0, 0xAA }),
             HidppResponse(1, 0, 0, 1, new byte[] { 3, 0, 0 }),
-            HidppResponse(1, 0, 0, 1, new byte[] { 9, 0, 0 }),
             HidppResponse(1, 3, 0, 1, new byte[] { 0, 0, 0, 0, 0, 0, 0x04, 0x40, 0xBD, 0, 0, 0, 0 }, 0x11),
+            HidppResponse(1, 0, 0, 1, new byte[] { 9, 0, 0 }),
             HidppResponse(1, 9, 0, 1, new byte[] { 0x0F, 0x03, 0 }),
             HidppResponse(1, 9, 0x10, 1, new byte[] { 15, 0, 0x02 }));
         var adapter = new LogitechGProX2SuperstrikeAdapter(new FixtureProvider(collection, transaction));
@@ -227,8 +247,8 @@ public sealed partial class ProtocolTests
         Assert.Equal(6, transaction.Writes.Count);
         Assert.Equal(new byte[] { 0x10, 1, 0, 0x11, 0, 0 }, transaction.Writes[0][..6]);
         Assert.Equal(new byte[] { 0x10, 1, 0, 1, 0, 3, 0 }, transaction.Writes[1][..7]);
-        Assert.Equal(new byte[] { 0x10, 1, 0, 1, 0x10, 4, 0 }, transaction.Writes[2][..7]);
-        Assert.Equal(new byte[] { 0x10, 1, 3, 1, 0, 0, 0 }, transaction.Writes[3][..7]);
+        Assert.Equal(new byte[] { 0x10, 1, 3, 1, 0, 0, 0 }, transaction.Writes[2][..7]);
+        Assert.Equal(new byte[] { 0x10, 1, 0, 1, 0x10, 4, 0 }, transaction.Writes[3][..7]);
         Assert.Equal(new byte[] { 0x10, 1, 9, 1, 0, 0, 0 }, transaction.Writes[4][..7]);
         Assert.Equal(new byte[] { 0x10, 0x01, 0x09, 0x11, 0, 0, 0 }, transaction.Writes[^1][..7]);
     }
