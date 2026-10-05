@@ -195,13 +195,9 @@ public sealed class DeviceStateViewModel : INotifyPropertyChanged
 
     public bool IsCharging => _presentation.IsCharging;
 
-    public bool IsNotCharging => _presentation.State == BatteryChargeState.NotCharging;
-
     public bool IsOffline => _presentation.IsOffline;
 
     public bool IsNotOffline => !IsOffline;
-
-    public bool IsSegmentedBatteryVisible => IsNotCharging || IsOffline;
 
     public Color BatteryColor => Color.FromArgb(_presentation.BatteryColorHex);
 

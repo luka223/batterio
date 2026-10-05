@@ -43,7 +43,6 @@
                             <Grid Grid.Column="2" WidthRequest="42" HeightRequest="18"
                                   SemanticProperties.Description="{Binding BatteryDescription}">
                                 <Border WidthRequest="36" HeightRequest="18" Padding="2" HorizontalOptions="Start"
-                                        IsVisible="{Binding IsSegmentedBatteryVisible}"
                                         Stroke="{Binding BatteryColor}" StrokeThickness="2" StrokeShape="RoundRectangle 3">
                                     <HorizontalStackLayout Spacing="0" BindableLayout.ItemsSource="{Binding BatterySegments}">
                                         <BindableLayout.ItemTemplate>
@@ -56,21 +55,13 @@
                                     </HorizontalStackLayout>
                                 </Border>
                                 <Border WidthRequest="3" HeightRequest="6" Margin="36,0,0,0"
-                                        IsVisible="{Binding IsSegmentedBatteryVisible}"
                                         HorizontalOptions="Start" VerticalOptions="Center"
                                         BackgroundColor="{Binding BatteryColor}" StrokeThickness="0" StrokeShape="RoundRectangle 1" />
-                                <Border WidthRequest="36" HeightRequest="18" Padding="2" HorizontalOptions="Start"
-                                        IsVisible="{Binding IsCharging}"
-                                        Stroke="{Binding ChargingColor}" StrokeThickness="2" StrokeShape="RoundRectangle 3"
-                                        BackgroundColor="{Binding ChargingColor}">
-                                    <shapes:Path Data="M 7,0 L 0,7 L 4,7 L 2,14 L 11,5 L 7,5 L 9,0 Z"
-                                                 Fill="{Binding ChargingBoltColor}" HorizontalOptions="Center"
-                                                 VerticalOptions="Center" Aspect="Uniform" WidthRequest="10" HeightRequest="12" />
-                                </Border>
-                                <Border WidthRequest="3" HeightRequest="6" Margin="36,0,0,0"
-                                        IsVisible="{Binding IsCharging}"
-                                        HorizontalOptions="Start" VerticalOptions="Center"
-                                        BackgroundColor="{Binding ChargingColor}" StrokeThickness="0" StrokeShape="RoundRectangle 1" />
+                                <shapes:Path Data="M 7,0 L 0,7 L 4,7 L 2,14 L 11,5 L 7,5 L 9,0 Z"
+                                             IsVisible="{Binding IsCharging}"
+                                             Fill="White" Stroke="{Binding ChargingBoltColor}" StrokeThickness="1"
+                                             HorizontalOptions="Start" VerticalOptions="Center" Margin="13,0,0,0"
+                                             Aspect="Uniform" WidthRequest="10" HeightRequest="12" InputTransparent="True" />
                             </Grid>
                             <Label Grid.Column="3" Text="{Binding PercentageText}" FontSize="14"
                                    FontAttributes="Bold" VerticalOptions="Center"

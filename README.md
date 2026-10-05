@@ -49,7 +49,6 @@ Adapters must use cooperative cancellation. If a device ignores cancellation, Ba
 The supported delivery is one unpackaged, self-contained `win-x64` folder. It contains the public NativeAOT launcher `Batterio.App.exe`, the private WinUI process `Batterio.Runtime.exe`, the Windows App SDK 2.4.0 files, and the app icon. Deploy the complete folder; the launcher and runtime are designed to stay together.
 
 ```powershell
-dotnet restore Batterio.sln --configfile NuGet.Config --runtime win-x64
 .\eng\Publish-Batterio.ps1
 & .\publish\Batterio.App.exe
 ```
