@@ -108,3 +108,17 @@ dotnet run --project tests/Batterio.NotificationProbe -c Release -- history-full
 ```
 
 `notify` submits one native low battery test toast despite repeated low readings. `notify-fully-charged` submits one native fully charged test toast despite repeated 100% readings. Inspect the exact text, Batterio identity, Notification Center persistence, and click behavior while the app runs and after exiting it. `activate` and `activate-fully-charged` directly exercise the COM callback with each toast's launch argument and request cold activation when needed; verify the process path as well as the return result. `history` and `history-fully-charged` read back the matching probe toast from Windows notification history. These commands are manual diagnostics and do not replace clean-machine acceptance in the disposable VM.
+
+## Screenshots
+
+Tray popup:
+
+![Batterio popup](docs/screenshots/popup.png)
+
+Tray menu:
+
+![Batterio tray menu](docs/screenshots/tray-menu.png)
+
+Settings:
+
+![Batterio settings](docs/screenshots/settings.png)
