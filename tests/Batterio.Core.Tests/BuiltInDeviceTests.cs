@@ -28,23 +28,24 @@ public sealed class BuiltInDeviceTests
     }
 
     [Fact]
-    public async Task BuiltInDevicesContainOnlyTheTwoLogitechAdapters()
+    public async Task BuiltInDevicesContainTheShippedAdapters()
     {
         var devices = BuiltInDevices.Create();
-        Assert.Equal(2, devices.Count);
+        Assert.Equal(3, devices.Count);
         Assert.All(devices, device => Assert.Equal(300, device.PollIntervalSeconds));
         Assert.Equal(
-            new[] { "logitech-g-pro-x2-superstrike", "logitech-g-pro-x2-lightspeed" },
+            new[] { "logitech-g-pro-x2-superstrike", "logitech-g-pro-x2-lightspeed", "steelseries-arctis-nova-pro-omni" },
             devices.Select(device => device.AdapterId));
 
         await using var coordinator = new PollingCoordinator(new AdapterRegistry([
             new FixedFactory("logitech-g-pro-x2-superstrike", new BatteryReading(64, BatteryChargeState.NotCharging)),
-            new FixedFactory("logitech-g-pro-x2-lightspeed", new BatteryReading(15, BatteryChargeState.Charging))]));
+            new FixedFactory("logitech-g-pro-x2-lightspeed", new BatteryReading(15, BatteryChargeState.Charging)),
+            new FixedFactory("steelseries-arctis-nova-pro-omni", new BatteryReading(90, BatteryChargeState.NotCharging))]));
         var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var readings = 0;
         coordinator.StateChanged += (_, e) =>
         {
-            if (e.State.Percentage is not null && Interlocked.Increment(ref readings) == 2)
+            if (e.State.Percentage is not null && Interlocked.Increment(ref readings) == 3)
             {
                 ready.TrySetResult(true);
             }
@@ -60,7 +61,7 @@ public sealed class BuiltInDeviceTests
 
         await coordinator.RefreshAllAsync().WaitAsync(TimeSpan.FromSeconds(2));
         await coordinator.RefreshDeviceAsync(devices[0].Id).WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(5, readings);
+        Assert.Equal(7, readings);
     }
 
     [Fact]
@@ -91,10 +92,12 @@ public sealed class BuiltInDeviceTests
     {
         await using var superstrike = new LogitechGProX2SuperstrikeAdapter();
         await using var lightspeed = new LogitechGProX2LightspeedAdapter();
+        await using var omni = new SteelSeriesArctisNovaProOmniAdapter();
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => superstrike.GetBatteryStatus(cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lightspeed.GetBatteryStatus(cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => omni.GetBatteryStatus(cancellation.Token));
     }
 
     private sealed class FixedFactory(string adapterId, BatteryReading reading) : IBatteryAdapterFactory

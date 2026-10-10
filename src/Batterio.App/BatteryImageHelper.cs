@@ -47,6 +47,7 @@ public static class BatteryImageHelper
     {
         "logitech-g-pro-x2-superstrike" => "superstrike.png",
         "logitech-g-pro-x2-lightspeed" => "lightspeed.webp",
+        "steelseries-arctis-nova-pro-omni" => "arctis_nova_pro_omni_black.png",
         _ => "battery_placeholder.scale-100.png"
     };
 

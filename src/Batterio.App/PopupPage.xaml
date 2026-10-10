@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
-             xmlns:shapes="clr-namespace:Microsoft.Maui.Controls.Shapes;assembly=Microsoft.Maui.Controls"
+             xmlns:local="clr-namespace:Batterio.App"
              x:Class="Batterio.App.PopupPage"
              Title="Batterio">
     <Border Padding="14" StrokeShape="RoundRectangle 14" StrokeThickness="1">
@@ -31,7 +31,7 @@
                 </CollectionView.EmptyView>
                 <CollectionView.ItemTemplate>
                     <DataTemplate>
-                        <Grid Padding="0,10" ColumnDefinitions="56,*,Auto,Auto" ColumnSpacing="10">
+                        <Grid Padding="0,10" ColumnDefinitions="56,*,Auto" ColumnSpacing="10">
                             <Image Source="{Binding PhotoSource}" WidthRequest="52" HeightRequest="52"
                                    HorizontalOptions="Center" VerticalOptions="Center" />
                             <Label Grid.Column="1" Text="{Binding Name}" FontAttributes="Bold"
@@ -40,32 +40,23 @@
                             <Label Grid.Column="1" Text="{Binding Name}" FontAttributes="Bold"
                                    VerticalOptions="Center" IsVisible="{Binding IsOffline}"
                                    TextColor="{AppThemeBinding Light=#71717A, Dark=#A1A1AA}" />
-                            <Grid Grid.Column="2" WidthRequest="42" HeightRequest="18"
+                            <Grid Grid.Column="2" RowDefinitions="Auto,Auto" ColumnDefinitions="42,Auto"
+                                  ColumnSpacing="10" VerticalOptions="Center"
                                   SemanticProperties.Description="{Binding BatteryDescription}">
-                                <Border WidthRequest="36" HeightRequest="18" Padding="2" HorizontalOptions="Start"
-                                        Stroke="{Binding BatteryColor}" StrokeThickness="2" StrokeShape="RoundRectangle 3">
-                                    <HorizontalStackLayout Spacing="0" BindableLayout.ItemsSource="{Binding BatterySegments}">
-                                        <BindableLayout.ItemTemplate>
-                                            <DataTemplate>
-                                                <Border WidthRequest="2.8" HeightRequest="10"
-                                                        BackgroundColor="{Binding Color}" StrokeThickness="0"
-                                                        StrokeShape="RoundRectangle 1" IsVisible="{Binding IsFilled}" />
-                                            </DataTemplate>
-                                        </BindableLayout.ItemTemplate>
-                                    </HorizontalStackLayout>
-                                </Border>
-                                <Border WidthRequest="3" HeightRequest="6" Margin="36,0,0,0"
-                                        HorizontalOptions="Start" VerticalOptions="Center"
-                                        BackgroundColor="{Binding BatteryColor}" StrokeThickness="0" StrokeShape="RoundRectangle 1" />
-                                <shapes:Path Data="M 7,0 L 0,7 L 4,7 L 2,14 L 11,5 L 7,5 L 9,0 Z"
-                                             IsVisible="{Binding IsCharging}"
-                                             Fill="White" Stroke="{Binding ChargingBoltColor}" StrokeThickness="1"
-                                             HorizontalOptions="Start" VerticalOptions="Center" Margin="13,0,0,0"
-                                             Aspect="Uniform" WidthRequest="10" HeightRequest="12" InputTransparent="True" />
+                                <local:BatteryIconView BatteryColor="{Binding BatteryColor}"
+                                                       FilledSegments="{Binding FilledSegments}"
+                                                       IsCharging="{Binding IsCharging}" />
+                                <Label Grid.Column="1" Text="{Binding PercentageText}" FontSize="14"
+                                       FontAttributes="Bold" VerticalOptions="Center" MinimumWidthRequest="40"
+                                       IsVisible="{Binding IsPercentageVisible}" />
+                                <local:BatteryIconView Grid.Row="1" Margin="0,4,0,0" IsVisible="{Binding IsReserveVisible}"
+                                                       BatteryColor="{AppThemeBinding Light=#18181B, Dark=#FFFFFF}"
+                                                       FilledSegments="{Binding ReserveFilledSegments}"
+                                                       IsCharging="{Binding IsReserveCharging}" />
+                                <Label Grid.Row="1" Grid.Column="1" Margin="0,4,0,0" Text="{Binding ReservePercentageText}" FontSize="14"
+                                       FontAttributes="Bold" VerticalOptions="Center" MinimumWidthRequest="40"
+                                       IsVisible="{Binding IsReservePercentageVisible}" />
                             </Grid>
-                            <Label Grid.Column="3" Text="{Binding PercentageText}" FontSize="14"
-                                   FontAttributes="Bold" VerticalOptions="Center"
-                                   IsVisible="{Binding IsPercentageVisible}" />
                         </Grid>
                     </DataTemplate>
                 </CollectionView.ItemTemplate>

@@ -12,12 +12,16 @@ public sealed record BuiltInDeviceDefinition
 
     public required IReadOnlyList<HidCollectionQuery> PresenceQueries { get; init; }
 
+    /// <summary>The device reports a second (reserve) battery that is shown beneath the primary one.</summary>
+    public bool HasReserveBattery { get; init; }
+
     public DeviceConfiguration CreateConfiguration() => new()
     {
         Id = Id,
         Name = Name,
         AdapterId = AdapterId,
-        Enabled = true
+        Enabled = true,
+        HasReserveBattery = HasReserveBattery
     };
 }
 

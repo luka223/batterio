@@ -123,11 +123,11 @@ public sealed class LogitechGProX2LightspeedAdapterFactory : IBatteryAdapterFact
 
     public string AdapterId => "logitech-g-pro-x2-lightspeed";
 
-    public void ValidateSettings(JsonElement settings) => LogitechAdapterSettings.ReadDevicePath(settings, AdapterId);
+    public void ValidateSettings(JsonElement settings) => HidAdapterSettings.ReadDevicePath(settings, AdapterId);
 
     public IBatteryAdapter CreateAdapter(DeviceConfiguration device) =>
         new LogitechGProX2LightspeedAdapter(
             _provider,
             _log,
-            LogitechAdapterSettings.ReadDevicePath(device.AdapterSettings, AdapterId));
+            HidAdapterSettings.ReadDevicePath(device.AdapterSettings, AdapterId));
 }

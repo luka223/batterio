@@ -170,12 +170,13 @@ public sealed class DeviceStateViewModel : INotifyPropertyChanged
 {
     private DeviceBatteryState _state;
     private BatteryPresentation _presentation;
+    private BatteryPresentation _reservePresentation;
 
     public DeviceStateViewModel(DeviceBatteryState state)
     {
         _state = state;
         _presentation = BatteryPresentationRules.Create(state.Reading);
-        BatterySegments = CreateBatterySegments();
+        _reservePresentation = BatteryPresentationRules.CreateReserve(state.Reading.Reserve);
         RefreshCommand = new Command(async () => await RefreshAsync());
     }
 
@@ -201,29 +202,30 @@ public sealed class DeviceStateViewModel : INotifyPropertyChanged
 
     public Color BatteryColor => Color.FromArgb(_presentation.BatteryColorHex);
 
-    public Color ChargingColor => Color.FromArgb(BatteryPresentationRules.ChargingColorHex);
+    public int FilledSegments => _presentation.FilledSegments;
 
-    public Color ChargingBoltColor => Color.FromArgb("#14532D");
+    public bool HasReserveBattery => _state.Configuration.HasReserveBattery;
 
-    public IReadOnlyList<BatterySegmentViewModel> BatterySegments { get; private set; }
+    public bool IsReserveVisible => HasReserveBattery && _state.Reading.Reserve is not null;
+
+    public string ReservePercentageText => _reservePresentation.PercentageText;
+
+    public bool IsReservePercentageVisible => _reservePresentation.IsPercentageVisible;
+
+    public int ReserveFilledSegments => _reservePresentation.FilledSegments;
+
+    public bool IsReserveCharging => _reservePresentation.IsCharging;
 
     public string BatteryDescription =>
-        BatteryPresentationRules.GetAccessibilityDescription(Name, _state.Reading);
+        BatteryPresentationRules.GetAccessibilityDescription(Name, _state.Reading, HasReserveBattery);
 
     public void Update(DeviceBatteryState state)
     {
         _state = state;
         _presentation = BatteryPresentationRules.Create(state.Reading);
-        BatterySegments = CreateBatterySegments();
+        _reservePresentation = BatteryPresentationRules.CreateReserve(state.Reading.Reserve);
         OnPropertyChanged(string.Empty);
     }
-
-    private BatterySegmentViewModel[] CreateBatterySegments() =>
-        Enumerable.Range(0, 10)
-            .Select(index => new BatterySegmentViewModel(
-                index < _presentation.FilledSegments,
-                BatteryColor))
-            .ToArray();
 
     private async Task RefreshAsync()
     {
@@ -236,5 +238,3 @@ public sealed class DeviceStateViewModel : INotifyPropertyChanged
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>
         PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
 }
-
-public sealed record BatterySegmentViewModel(bool IsFilled, Color Color);

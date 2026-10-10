@@ -22,6 +22,14 @@ public static class BuiltInDevices
             Name = "Logitech G Pro X2 Lightspeed",
             AdapterId = "logitech-g-pro-x2-lightspeed",
             PresenceQueries = [LogitechReceiverDefinitions.LightspeedQuery]
+        },
+        new BuiltInDeviceDefinition
+        {
+            Id = "steelseries-arctis-nova-pro-omni",
+            Name = "SteelSeries Arctis Nova Pro Omni",
+            AdapterId = "steelseries-arctis-nova-pro-omni",
+            HasReserveBattery = true,
+            PresenceQueries = [SteelSeriesDefinitions.NovaProOmniQuery]
         }
     ];
 

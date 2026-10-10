@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentView xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:shapes="clr-namespace:Microsoft.Maui.Controls.Shapes;assembly=Microsoft.Maui.Controls"
+             x:Class="Batterio.App.BatteryIconView"
+             x:Name="Root"
+             WidthRequest="42" HeightRequest="18"
+             HorizontalOptions="Start" VerticalOptions="Center">
+    <Grid WidthRequest="42" HeightRequest="18">
+        <Border WidthRequest="36" HeightRequest="18" Padding="2" HorizontalOptions="Start"
+                Stroke="{Binding BatteryColor, Source={x:Reference Root}}"
+                StrokeThickness="2" StrokeShape="RoundRectangle 3">
+            <HorizontalStackLayout x:Name="Segments" Spacing="0" />
+        </Border>
+        <Border WidthRequest="3" HeightRequest="6" Margin="36,0,0,0"
+                HorizontalOptions="Start" VerticalOptions="Center"
+                BackgroundColor="{Binding BatteryColor, Source={x:Reference Root}}"
+                StrokeThickness="0" StrokeShape="RoundRectangle 1" />
+        <shapes:Path Data="M 7,0 L 0,7 L 4,7 L 2,14 L 11,5 L 7,5 L 9,0 Z"
+                     IsVisible="{Binding IsCharging, Source={x:Reference Root}}"
+                     Fill="White" Stroke="#14532D" StrokeThickness="1"
+                     HorizontalOptions="Start" VerticalOptions="Center" Margin="13,0,0,0"
+                     Aspect="Uniform" WidthRequest="10" HeightRequest="12" InputTransparent="True" />
+    </Grid>
+</ContentView>

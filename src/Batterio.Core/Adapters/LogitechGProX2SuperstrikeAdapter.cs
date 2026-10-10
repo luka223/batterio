@@ -294,11 +294,11 @@ public sealed class LogitechGProX2SuperstrikeAdapterFactory : IBatteryAdapterFac
 
     public string AdapterId => "logitech-g-pro-x2-superstrike";
 
-    public void ValidateSettings(JsonElement settings) => LogitechAdapterSettings.ReadDevicePath(settings, AdapterId);
+    public void ValidateSettings(JsonElement settings) => HidAdapterSettings.ReadDevicePath(settings, AdapterId);
 
     public IBatteryAdapter CreateAdapter(DeviceConfiguration device) =>
         new LogitechGProX2SuperstrikeAdapter(
             _provider,
             _log,
-            LogitechAdapterSettings.ReadDevicePath(device.AdapterSettings, AdapterId));
+            HidAdapterSettings.ReadDevicePath(device.AdapterSettings, AdapterId));
 }

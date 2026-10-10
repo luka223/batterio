@@ -628,6 +628,7 @@ public sealed class PollingCoordinator : IAsyncDisposable
         string.Equals(first.PhotoPath, second.PhotoPath, StringComparison.Ordinal) &&
         string.Equals(first.AdapterId, second.AdapterId, StringComparison.OrdinalIgnoreCase) &&
         first.Enabled == second.Enabled &&
+        first.HasReserveBattery == second.HasReserveBattery &&
         first.PollIntervalSeconds == second.PollIntervalSeconds &&
         first.TimeoutSeconds == second.TimeoutSeconds &&
         JsonElementsEqual(first.AdapterSettings, second.AdapterSettings);

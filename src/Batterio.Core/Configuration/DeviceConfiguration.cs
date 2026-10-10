@@ -23,6 +23,9 @@ public sealed class DeviceConfiguration
     [JsonPropertyName("enabled")]
     public bool Enabled { get; init; } = true;
 
+    [JsonPropertyName("hasReserveBattery")]
+    public bool HasReserveBattery { get; init; }
+
     [JsonPropertyName("pollIntervalSeconds")]
     public int PollIntervalSeconds { get; init; } = 300;
 

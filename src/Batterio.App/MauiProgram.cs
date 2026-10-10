@@ -23,6 +23,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IHidCollectionProvider, WindowsHidCollectionProvider>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2SuperstrikeAdapterFactory>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2LightspeedAdapterFactory>();
+        builder.Services.AddSingleton<IBatteryAdapterFactory, SteelSeriesArctisNovaProOmniAdapterFactory>();
         builder.Services.AddSingleton<AdapterRegistry>();
         builder.Services.AddSingleton<IUserSettingsStore>(services => new JsonUserSettingsStore(
             new ConfigurationPathProvider().SettingsFilePath,

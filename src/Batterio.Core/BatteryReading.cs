@@ -36,6 +36,21 @@ public sealed record BatteryReading
 
     public BatteryChargeState ChargeState { get; }
 
+    /// <summary>Optional second battery that is reported together with the primary one, such as a charging-slot spare.</summary>
+    public BatteryReading? Reserve
+    {
+        get;
+        init
+        {
+            if (value?.Reserve is not null)
+            {
+                throw new ArgumentException("A reserve battery reading cannot carry its own reserve.", nameof(value));
+            }
+
+            field = value;
+        }
+    }
+
     public void Deconstruct(out int? percentage, out BatteryChargeState chargeState)
     {
         percentage = Percentage;
