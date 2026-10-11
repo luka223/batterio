@@ -35,9 +35,18 @@ Left-click the tray icon to open the popup, right-click it for the menu (Setting
 
 New devices are added by implementing `IBatteryAdapterFactory` / `IBatteryAdapter` and registering them in `MauiProgram` and `BuiltInDevices.Create()`.
 
-## Build and run
+## Prerequisites
 
-Requires the .NET 10 SDK, the .NET MAUI Windows workload and Visual Studio C++ x64 build tools.
+**Running**: nothing to install. Both publish outputs are self-contained: the .NET runtime and the Windows App Runtime are bundled, the launcher is compiled with NativeAOT, and devices are read through the HID APIs built into Windows. Logitech G HUB, Logi Options+ and SteelSeries GG are not needed; Batterio opens devices in shared mode, so it also runs alongside them.
+
+**Building** requires:
+
+- **.NET 10 SDK**, the version pinned in `global.json`, to build and publish the solution.
+- **.NET MAUI Windows workload** (`dotnet workload install maui-windows`), because the tray app and popup are a MAUI/WinUI project.
+- **Visual Studio C++ x64 build tools** (the "Desktop development with C++" workload, or the Build Tools equivalent with the Windows SDK), because NativeAOT compiles the launcher to native code and needs the MSVC linker and Windows SDK libraries.
+- **Windows App Runtime 2.x**, only for Debug runs (`dotnet run`, or F5 in Visual Studio). Only Release builds bundle the Windows App SDK, so a Debug build loads the runtime installed on the machine and fails to start without it. Published builds do not need it.
+
+## Build and run
 
 ```powershell
 dotnet restore Batterio.sln --configfile NuGet.Config --runtime win-x64
