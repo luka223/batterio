@@ -10,7 +10,7 @@
     <ApplicationTitle>Batterio</ApplicationTitle>
     <ApplicationIcon>Resources\AppIcon\batterio.ico</ApplicationIcon>
     <ApplicationId>com.batterio.tray</ApplicationId>
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>$(Version)</ApplicationDisplayVersion>
     <ApplicationVersion>1</ApplicationVersion>
     <WindowsPackageType>None</WindowsPackageType>
     <SupportedOSPlatformVersion>10.0.19041.0</SupportedOSPlatformVersion>

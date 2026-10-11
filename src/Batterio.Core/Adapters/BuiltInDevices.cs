@@ -30,6 +30,20 @@ public static class BuiltInDevices
             AdapterId = "steelseries-arctis-nova-pro-omni",
             HasReserveBattery = true,
             PresenceQueries = [SteelSeriesDefinitions.NovaProOmniQuery]
+        },
+        new BuiltInDeviceDefinition
+        {
+            Id = "logitech-mx-master-3s",
+            Name = "Logitech MX Master 3S",
+            AdapterId = "logitech-mx-master-3s",
+            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery]
+        },
+        new BuiltInDeviceDefinition
+        {
+            Id = "logitech-mx-keys-mechanical",
+            Name = "Logitech MX Keys Mechanical",
+            AdapterId = "logitech-mx-keys-mechanical",
+            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery]
         }
     ];
 

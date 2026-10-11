@@ -13,6 +13,7 @@ public sealed class BatteryApplication : IAsyncDisposable
     private readonly WindowCoordinator _windows;
     private readonly DeviceSelectionCoordinator _selection;
     private readonly BatteryNotificationCoordinator _batteryNotifications;
+    private readonly IStartupRegistrationService _startupRegistration;
     private readonly IBatterioLog _log;
     private readonly ILogger<BatteryApplication> _logger;
     private readonly RuntimeStartupSequence _startup;
@@ -29,6 +30,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         BatteryNotificationCoordinator batteryNotifications,
         ITrayService tray,
         WindowCoordinator windows,
+        IStartupRegistrationService startupRegistration,
         IBatterioLog log,
         ILogger<BatteryApplication> logger)
     {
@@ -37,6 +39,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         _batteryNotifications = batteryNotifications;
         _tray = tray;
         _windows = windows;
+        _startupRegistration = startupRegistration;
         _log = log;
         _logger = logger;
         _boundedExit = new BoundedCleanupProcessExit(_processTerminator);
@@ -57,7 +60,29 @@ public sealed class BatteryApplication : IAsyncDisposable
 
     public bool IsExiting => _isExiting;
 
-    public Task StartAsync() => _startup.StartAsync();
+    public Task StartAsync()
+    {
+        RefreshStartupRegistration();
+        return _startup.StartAsync();
+    }
+
+    private void RefreshStartupRegistration()
+    {
+#if !DEBUG
+        // Debug runs from the build output must not take over the startup entry of an installed copy.
+        try
+        {
+            if (_startupRegistration.RefreshRegistrationAsync().GetAwaiter().GetResult())
+            {
+                _log.Log(BatterioLogLevel.Information, "Startup registration was updated to the current executable.");
+            }
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Warning, "Startup registration could not be refreshed.", exception);
+        }
+#endif
+    }
 
     internal void ConfigureProcessTerminator(IProcessTerminator processTerminator)
     {

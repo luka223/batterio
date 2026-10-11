@@ -64,7 +64,7 @@ internal static class LogitechErrors
     }, $"{protocol} feature error 0x{code:X2}.");
 }
 
-internal static class LogitechDeviceInformation
+public static class LogitechDeviceInformation
 {
     public static bool TryGetModelIdForTransport(
         IReadOnlyList<byte> parameters,
@@ -93,6 +93,97 @@ internal static class LogitechDeviceInformation
 
         modelId = (ushort)((parameters[modelOffset] << 8) | parameters[modelOffset + 1]);
         return true;
+    }
+
+    /// <summary>Every model ID in a Device Information reply, tagged with its transport flag (1 BT, 2 BLE, 4 eQuad, 8 USB).</summary>
+    public static IReadOnlyList<(byte Transport, ushort ModelId)> GetModelIds(IReadOnlyList<byte> parameters)
+    {
+        var result = new List<(byte, ushort)>();
+        if (parameters.Count < 7)
+        {
+            return result;
+        }
+
+        var bitmap = parameters[6];
+        var offset = 7;
+        for (byte flag = 0x01; flag != 0 && flag <= 0x08; flag <<= 1)
+        {
+            if ((bitmap & flag) == 0)
+            {
+                continue;
+            }
+
+            if (parameters.Count < offset + 2)
+            {
+                break;
+            }
+
+            result.Add((flag, (ushort)((parameters[offset] << 8) | parameters[offset + 1])));
+            offset += 2;
+        }
+
+        return result;
+    }
+
+    public static string FormatModelIds(IReadOnlyList<byte> parameters)
+    {
+        if (parameters.Count < 7)
+        {
+            return "unavailable";
+        }
+
+        var ids = GetModelIds(parameters);
+        var text = ids.Count == 0
+            ? "none"
+            : string.Join(", ", ids.Select(entry => $"transport 0x{entry.Transport:X2}=0x{entry.ModelId:X4}"));
+        return $"transport bitmap 0x{parameters[6]:X2}, model IDs: {text}";
+    }
+}
+
+public static class LogitechDeviceName
+{
+    public const ushort FeatureId = 0x0005;
+    public const int MaximumLength = 64;
+
+    /// <summary>
+    /// Reads the HID++ 2.0 Device Name (0x0005): fn0 returns the name length, fn1 returns 16-byte chunks
+    /// starting at the character index given as the parameter. Returns null when the feature is absent.
+    /// </summary>
+    public static async Task<string?> ReadAsync(HidppClient client, byte deviceIndex, CancellationToken cancellationToken)
+    {
+        byte featureIndex;
+        try
+        {
+            featureIndex = await client.ResolveFeatureAsync(deviceIndex, FeatureId, cancellationToken).ConfigureAwait(false);
+        }
+        catch (BatteryAdapterException exception) when (exception.Kind == BatteryAdapterErrorKind.UnsupportedCapability)
+        {
+            return null;
+        }
+
+        var lengthReply = await client.SendAsync(deviceIndex, featureIndex, 0, ReadOnlyMemory<byte>.Empty, cancellationToken)
+            .ConfigureAwait(false);
+        if (lengthReply.Parameters.Length < 1)
+        {
+            throw new BatteryAdapterException(BatteryAdapterErrorKind.MalformedResponse, "Truncated HID++ device name length.");
+        }
+
+        var length = Math.Min((int)lengthReply.Parameters[0], MaximumLength);
+        var bytes = new List<byte>(length);
+        while (bytes.Count < length)
+        {
+            var chunk = await client.SendAsync(deviceIndex, featureIndex, 0x10, new[] { (byte)bytes.Count }, cancellationToken)
+                .ConfigureAwait(false);
+            var take = Math.Min(chunk.Parameters.Length, length - bytes.Count);
+            if (take <= 0)
+            {
+                break;
+            }
+
+            bytes.AddRange(chunk.Parameters.AsSpan(0, take).ToArray());
+        }
+
+        return System.Text.Encoding.UTF8.GetString(bytes.ToArray()).TrimEnd('\0').Trim();
     }
 }
 
@@ -271,7 +362,11 @@ public static class LogitechBatteryDecoding
 
     public static bool IsRecognizedCenturionStatus(byte status) => status <= 0x03;
 
-    public static BatteryReading DecodeSuperstrike(IReadOnlyList<byte> parameters, bool supportsPercentage = true)
+    public static BatteryReading DecodeSuperstrike(IReadOnlyList<byte> parameters, bool supportsPercentage = true) =>
+        DecodeUnifiedBattery(parameters, supportsPercentage);
+
+    /// <summary>Decodes a HID++ 2.0 Unified Battery (0x1004) status reply: state of charge, level bitmask, status, external power.</summary>
+    public static BatteryReading DecodeUnifiedBattery(IReadOnlyList<byte> parameters, bool supportsPercentage = true)
     {
         if (parameters.Count < 1)
         {
@@ -315,6 +410,37 @@ public static class LogitechBatteryDecoding
         }
 
         return new BatteryReading(percentage, chargeState);
+    }
+
+    /// <summary>
+    /// Decodes a HID++ 2.0 Battery Status (0x1000) reply: level, next level, status.
+    /// Status: 0 discharging, 1 recharging, 2 final charge stage, 3 charge complete, 4 recharging below optimal speed,
+    /// 5 invalid battery, 6 thermal error, 7 other charging error.
+    /// </summary>
+    public static BatteryReading DecodeBatteryStatus(IReadOnlyList<byte> parameters)
+    {
+        if (parameters.Count < 3)
+        {
+            throw new BatteryAdapterException(BatteryAdapterErrorKind.MalformedResponse,
+                "HID++ Battery Status reply was truncated.");
+        }
+
+        var level = parameters[0];
+        var status = parameters[2];
+        if (level > 100 || status > 0x07)
+        {
+            throw new BatteryAdapterException(BatteryAdapterErrorKind.MalformedResponse,
+                $"HID++ Battery Status returned an invalid level {level} or status 0x{status:X2}.");
+        }
+
+        if (status >= 0x05)
+        {
+            throw new BatteryAdapterException(BatteryAdapterErrorKind.BatteryReportedError,
+                $"HID++ Battery Status reported error status 0x{status:X2}.");
+        }
+
+        var chargeState = status is 0x01 or 0x02 or 0x04 ? BatteryChargeState.Charging : BatteryChargeState.NotCharging;
+        return new BatteryReading(level, chargeState);
     }
 
     public static bool SupportsPercentage(IReadOnlyList<byte> capabilities)

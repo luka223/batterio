@@ -11,6 +11,7 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
     private readonly IBatterioLog _log;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _stateGate = new();
+    private readonly HashSet<string> _sessionKnownDeviceIds = new(StringComparer.OrdinalIgnoreCase);
     private UserSettings _settings = UserSettings.Defaults();
     private DeviceDiscoverySnapshot _discoverySnapshot;
     private DeviceSelectionSnapshot _snapshot;
@@ -165,6 +166,7 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
                 }
 
                 _discoverySnapshot = discoverySnapshot;
+                await RememberPresentDevicesAsync().ConfigureAwait(false);
                 await ReconcilePollingAsync().ConfigureAwait(false);
                 PublishSelectionSnapshot(CreateSnapshot(isLoading: false));
             }
@@ -179,6 +181,37 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         }
     }
 
+    private async Task RememberPresentDevicesAsync()
+    {
+        var newlySeen = _discoverySnapshot.Devices
+            .Where(device => device.IsPresent && !_settings.IsDeviceKnown(device.DeviceId))
+            .Select(device => device.DeviceId)
+            .ToArray();
+        if (newlySeen.Length == 0)
+        {
+            return;
+        }
+
+        // Keep the device listed for this session even if persisting it fails;
+        // the next discovery pass retries the save because it is still unsaved.
+        var updated = _settings.WithKnownDevices(newlySeen);
+        try
+        {
+            await _settingsStore.SaveAsync(updated).ConfigureAwait(false);
+            _settings = updated;
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _log.Log(BatterioLogLevel.Warning, "Could not remember newly connected devices.", exception);
+            _sessionKnownDeviceIds.UnionWith(newlySeen);
+        }
+    }
+
+    private bool IsListed(DeviceDiscoveryState device) =>
+        device.IsPresent ||
+        _settings.IsDeviceKnown(device.DeviceId) ||
+        _sessionKnownDeviceIds.Contains(device.DeviceId);
+
     private async Task ReconcilePollingAsync(CancellationToken cancellationToken = default)
     {
         var active = _discoverySnapshot.Devices
@@ -191,6 +224,7 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
     private DeviceSelectionSnapshot CreateSnapshot(bool isLoading)
     {
         var devices = _discoverySnapshot.Devices
+            .Where(IsListed)
             .Select(device => new DeviceSelectionState
             {
                 Device = device.Device,

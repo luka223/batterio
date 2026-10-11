@@ -1,3 +1,5 @@
+using System.Reflection;
+
 namespace Batterio.App;
 
 public partial class SettingsPage : ContentPage
@@ -8,6 +10,15 @@ public partial class SettingsPage : ContentPage
     {
         InitializeComponent();
         BindingContext = viewModel;
+        VersionLabel.Text = $"Version {GetDisplayVersion()}";
+    }
+
+    private static string GetDisplayVersion()
+    {
+        var version = typeof(SettingsPage).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown";
+        var metadataStart = version.IndexOf('+');
+        return metadataStart >= 0 ? version[..metadataStart] : version;
     }
 
     private void OnStartupCheckedChanged(object? sender, CheckedChangedEventArgs e)

@@ -48,6 +48,16 @@ public static class LogitechReceiverDefinitions
         RequiredReportId = 0x11
     };
 
+    public static readonly HidCollectionQuery BoltReceiverQuery = new()
+    {
+        VendorId = LogitechBoltAdapter.VendorId,
+        ProductId = LogitechBoltAdapter.ReceiverProductId,
+        InterfaceNumber = LogitechBoltAdapter.InterfaceNumber,
+        UsagePage = 0xFF00,
+        MinimumReportLength = 20,
+        RequiredReportId = 0x11
+    };
+
     public static readonly HidCollectionQuery LightspeedQuery = new()
     {
         VendorId = LogitechGProX2LightspeedAdapter.VendorId,

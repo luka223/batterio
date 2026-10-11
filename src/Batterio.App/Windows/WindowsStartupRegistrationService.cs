@@ -114,6 +114,27 @@ public sealed class WindowsStartupRegistrationService : IStartupRegistrationServ
         return Task.CompletedTask;
     }
 
+    public Task<bool> RefreshRegistrationAsync(CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        using var key = _registry.OpenCurrentUser(RunKeyPath, writable: true);
+        if (key?.GetValue(AppName) is not string { Length: > 0 } storedCommand)
+        {
+            return Task.FromResult(false);
+        }
+
+        // A new version may have been placed at a different path than the one startup was enabled from.
+        var command = ResolveStartupCommand();
+        if (string.Equals(storedCommand, command, StringComparison.OrdinalIgnoreCase) &&
+            GetValueKindOrMissing(key) == RegistryValueKind.String)
+        {
+            return Task.FromResult(false);
+        }
+
+        key.SetValue(AppName, command, RegistryValueKind.String);
+        return Task.FromResult(true);
+    }
+
     private static RegistryValueKind? GetValueKindOrMissing(IStartupRegistryKey key)
     {
         try

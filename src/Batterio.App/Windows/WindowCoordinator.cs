@@ -309,8 +309,8 @@ public sealed class WindowCoordinator : IWindowCoordinator
         appWindow.IsShownInSwitchers = true;
         var scale = GetDpiScale(window);
         appWindow.Resize(new global::Windows.Graphics.SizeInt32(
-            (int)Math.Round(560 * scale),
-            (int)Math.Round(440 * scale)));
+            (int)Math.Round(720 * scale),
+            (int)Math.Round(600 * scale)));
     }
 
     private void OnPopupClosing(AppWindow sender, AppWindowClosingEventArgs args)

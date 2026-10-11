@@ -173,6 +173,71 @@ public sealed class SettingsDiscoveryTests
         await Eventually(() => polling.States.Count == 1);
     }
 
+    [Fact]
+    public async Task SelectionCoordinatorListsOnlyDevicesThatHaveBeenConnected()
+    {
+        using var fixture = new TempDirectory();
+        var owned = Definition("owned", Query(0x1000));
+        var neverOwned = Definition("never-owned", Query(0x2000));
+        var ownedCollection = Collection(owned.PresenceQueries[0]);
+        var provider = new FakeHidProvider { Collections = Array.Empty<HidCollectionInfo>() };
+        var registry = new AdapterRegistry(new[] { new TestFactory(owned.AdapterId), new TestFactory(neverOwned.AdapterId) });
+        var settingsPath = Path.Combine(fixture.Path, "settings.json");
+
+        await using (var polling = new PollingCoordinator(registry))
+        await using (var discovery = new DeviceDiscoveryService(new[] { owned, neverOwned }, registry, provider))
+        await using (var store = new JsonUserSettingsStore(settingsPath))
+        await using (var selection = new DeviceSelectionCoordinator(new[] { owned, neverOwned }, store, discovery, polling))
+        {
+            await selection.StartAsync();
+            Assert.Empty(selection.CurrentSnapshot.Devices);
+
+            provider.Collections = new[] { ownedCollection };
+            await selection.RefreshDiscoveryAsync();
+            var listed = Assert.Single(selection.CurrentSnapshot.Devices);
+            Assert.Equal(owned.Id, listed.DeviceId);
+            Assert.True(listed.IsPresent);
+
+            provider.Collections = Array.Empty<HidCollectionInfo>();
+            await selection.RefreshDiscoveryAsync();
+            listed = Assert.Single(selection.CurrentSnapshot.Devices);
+            Assert.Equal(owned.Id, listed.DeviceId);
+            Assert.False(listed.IsPresent);
+        }
+
+        await using (var polling = new PollingCoordinator(registry))
+        await using (var discovery = new DeviceDiscoveryService(new[] { owned, neverOwned }, registry, provider))
+        await using (var store = new JsonUserSettingsStore(settingsPath))
+        await using (var selection = new DeviceSelectionCoordinator(new[] { owned, neverOwned }, store, discovery, polling))
+        {
+            await selection.StartAsync();
+            var listed = Assert.Single(selection.CurrentSnapshot.Devices);
+            Assert.Equal(owned.Id, listed.DeviceId);
+            Assert.False(listed.IsPresent);
+        }
+    }
+
+    [Fact]
+    public async Task StoredSelectionsDoNotMakeDevicesKnownAndAreResetOnFirstConnection()
+    {
+        using var fixture = new TempDirectory();
+        var path = Path.Combine(fixture.Path, "settings.json");
+        await File.WriteAllTextAsync(path, "{\"version\":1,\"deviceSelections\":{\"mouse\":false}}");
+        var store = new JsonUserSettingsStore(path);
+
+        var settings = await store.LoadAsync();
+        Assert.False(settings.IsDeviceKnown("MOUSE"));
+        Assert.False(settings.IsDeviceSelected("mouse"));
+
+        await store.SaveAsync(settings.WithKnownDevices(new[] { "Mouse" }));
+        var reloaded = await store.LoadAsync();
+        Assert.True(reloaded.IsDeviceKnown("mouse"));
+        Assert.True(reloaded.IsDeviceSelected("mouse"));
+
+        var hidden = reloaded.WithDeviceSelection("mouse", false).WithKnownDevices(new[] { "mouse" });
+        Assert.False(hidden.IsDeviceSelected("mouse"));
+    }
+
     private static BuiltInDeviceDefinition Definition(string id, ushort vendorId) =>
         Definition(id, Query(vendorId));
 

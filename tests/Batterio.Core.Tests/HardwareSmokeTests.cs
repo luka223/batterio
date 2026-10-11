@@ -144,6 +144,81 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
         }
     }
 
+    [HardwareFact]
+    public async Task MxMaster3sCanBeQueried()
+    {
+        await using var adapter = new LogitechBoltAdapter(
+            LogitechBoltDeviceProfile.MxMaster3s, new WindowsHidCollectionProvider(), new TestLog(output));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var reading = await adapter.GetBatteryStatus(timeout.Token);
+        output.WriteLine($"MX Master 3S: {reading.Percentage}% ({reading.ChargeState})");
+        Assert.NotEqual(BatteryChargeState.Offline, reading.ChargeState);
+    }
+
+    [HardwareFact]
+    public async Task MxKeysMechanicalCanBeQueried()
+    {
+        await using var adapter = new LogitechBoltAdapter(
+            LogitechBoltDeviceProfile.MxKeysMechanical, new WindowsHidCollectionProvider(), new TestLog(output));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        var reading = await adapter.GetBatteryStatus(timeout.Token);
+        output.WriteLine($"MX Keys Mechanical: {reading.Percentage}% ({reading.ChargeState})");
+        Assert.NotEqual(BatteryChargeState.Offline, reading.ChargeState);
+    }
+
+    // Reverse-engineering aid: dumps what every paired Logi Bolt slot reports so the model IDs and names in
+    // LogitechBoltDeviceProfile can be confirmed or corrected. Send the output (and batterio.log) to the maintainers.
+    [HardwareFact]
+    public async Task BoltReceiverSlotsAreListed()
+    {
+        var provider = new WindowsHidCollectionProvider();
+        var receivers = provider.Enumerate(LogitechReceiverDefinitions.BoltReceiverQuery)
+            .Where(LogitechReceiverDefinitions.BoltReceiverQuery.Matches)
+            .ToArray();
+        Assert.NotEmpty(receivers);
+        var log = new TestLog(output);
+        foreach (var receiver in receivers)
+        {
+            output.WriteLine($"receiver path={receiver.DevicePath} in={receiver.InputReportLength} out={receiver.OutputReportLength}");
+            await using var transport = await provider.OpenAsync(receiver, CancellationToken.None);
+            await using var transaction = await transport.BeginTransactionAsync(CancellationToken.None);
+            var client = new HidppClient(transaction, receiver, log);
+            for (byte slot = 1; slot <= 6; slot++)
+            {
+                using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+                try
+                {
+                    var ping = await client.PingAsync(slot, timeout.Token);
+                    output.WriteLine($"slot {slot}: ping ok, HID++ {ping.Parameters[0]}.{ping.Parameters[1]}");
+
+                    var name = await LogitechDeviceName.ReadAsync(client, slot, timeout.Token);
+                    output.WriteLine($"slot {slot}: name '{name ?? "unavailable"}'");
+
+                    var infoIndex = await client.ResolveFeatureAsync(slot, 0x0003, timeout.Token);
+                    var info = await client.SendAsync(slot, infoIndex, 0, ReadOnlyMemory<byte>.Empty, timeout.Token);
+                    output.WriteLine($"slot {slot}: {LogitechDeviceInformation.FormatModelIds(info.Parameters)}; raw {Convert.ToHexString(info.Parameters)}");
+
+                    foreach (var feature in new ushort[] { 0x1000, 0x1004 })
+                    {
+                        try
+                        {
+                            var index = await client.ResolveFeatureAsync(slot, feature, timeout.Token);
+                            output.WriteLine($"slot {slot}: feature 0x{feature:X4} present at index 0x{index:X2}");
+                        }
+                        catch (BatteryAdapterException exception) when (exception.Kind == BatteryAdapterErrorKind.UnsupportedCapability)
+                        {
+                            output.WriteLine($"slot {slot}: feature 0x{feature:X4} absent");
+                        }
+                    }
+                }
+                catch (Exception exception) when (exception is BatteryAdapterException or OperationCanceledException)
+                {
+                    output.WriteLine($"slot {slot}: {exception.GetType().Name}: {exception.Message}");
+                }
+            }
+        }
+    }
+
     private sealed class TestLog(Xunit.Abstractions.ITestOutputHelper output) : IBatterioLog
     {
         public void Log(BatterioLogLevel level, string message, Exception? exception = null) => output.WriteLine(message);

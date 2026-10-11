@@ -84,7 +84,9 @@ public sealed class ReserveBatteryTests
         [
             new LogitechGProX2SuperstrikeAdapterFactory(),
             new LogitechGProX2LightspeedAdapterFactory(),
-            new SteelSeriesArctisNovaProOmniAdapterFactory()
+            new SteelSeriesArctisNovaProOmniAdapterFactory(),
+            new LogitechMxMaster3sAdapterFactory(),
+            new LogitechMxKeysMechanicalAdapterFactory()
         ]);
 
         Assert.All(BuiltInDevices.Catalog, device => Assert.True(registry.TryGetFactory(device.AdapterId, out _), device.AdapterId));

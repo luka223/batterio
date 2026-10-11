@@ -3,55 +3,59 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
              x:Class="Batterio.App.SettingsPage"
              Title="Batterio Settings">
-    <ScrollView>
-        <VerticalStackLayout Padding="28" Spacing="22">
-            <Label Text="General" FontSize="22" FontAttributes="Bold" />
-            <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
-                <VerticalStackLayout Spacing="3">
-                    <Label Text="Start automatically when Windows starts."
-                           FontSize="15" />
-                    <Label Text="Runs Batterio when you sign in to Windows."
-                           FontSize="12" Opacity="0.65" />
-                </VerticalStackLayout>
-                <CheckBox Grid.Column="1" IsChecked="{Binding IsStartupRegistered, Mode=TwoWay}"
-                          IsEnabled="{Binding IsStartupAvailable}"
-                          CheckedChanged="OnStartupCheckedChanged"
-                          VerticalOptions="Center"
-                          SemanticProperties.Description="Start automatically when Windows starts" />
-            </Grid>
-            <Label Text="Startup registration status is unavailable."
-                   IsVisible="{Binding IsStartupUnavailable}" Opacity="0.7" FontSize="12" />
-            <Label Text="{Binding StartupError}" IsVisible="{Binding HasStartupError}"
-                   TextColor="#DC2626" FontSize="12" />
+    <Grid RowDefinitions="*,Auto">
+        <ScrollView>
+            <VerticalStackLayout Padding="28" Spacing="22">
+                <Label Text="General" FontSize="22" FontAttributes="Bold" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
+                    <VerticalStackLayout Spacing="3">
+                        <Label Text="Start automatically when Windows starts."
+                               FontSize="15" />
+                        <Label Text="Runs Batterio when you sign in to Windows."
+                               FontSize="12" Opacity="0.65" />
+                    </VerticalStackLayout>
+                    <CheckBox Grid.Column="1" IsChecked="{Binding IsStartupRegistered, Mode=TwoWay}"
+                              IsEnabled="{Binding IsStartupAvailable}"
+                              CheckedChanged="OnStartupCheckedChanged"
+                              VerticalOptions="Center"
+                              SemanticProperties.Description="Start automatically when Windows starts" />
+                </Grid>
+                <Label Text="Startup registration status is unavailable."
+                       IsVisible="{Binding IsStartupUnavailable}" Opacity="0.7" FontSize="12" />
+                <Label Text="{Binding StartupError}" IsVisible="{Binding HasStartupError}"
+                       TextColor="#DC2626" FontSize="12" />
 
-            <BoxView HeightRequest="1" Opacity="0.2" />
-            <Label Text="Devices" FontSize="22" FontAttributes="Bold" />
-            <Label Text="Choose which connected devices appear in the tray popup."
-                   FontSize="13" Opacity="0.7" />
-            <ActivityIndicator IsRunning="{Binding IsLoading}" IsVisible="{Binding IsLoading}" />
-            <Label Text="{Binding Error}" IsVisible="{Binding HasError}"
-                   TextColor="#DC2626" FontSize="12" />
-            <Label Text="No supported devices have been discovered."
-                   IsVisible="{Binding HasNoDevices}" Opacity="0.7" />
-            <VerticalStackLayout BindableLayout.ItemsSource="{Binding Devices}" Spacing="4">
-                <BindableLayout.ItemTemplate>
-                    <DataTemplate>
-                        <Grid ColumnDefinitions="*,Auto" Padding="0,8" ColumnSpacing="20">
-                            <VerticalStackLayout Spacing="2">
-                                <Label Text="{Binding Name}" FontAttributes="Bold" />
-                                <Label Text="{Binding ConnectionText}" FontSize="12" Opacity="0.65" />
-                                <Label Text="{Binding Error}" IsVisible="{Binding HasError}"
-                                       TextColor="#DC2626" FontSize="11" />
-                            </VerticalStackLayout>
-                            <CheckBox Grid.Column="1" IsChecked="{Binding IsSelected, Mode=OneWay}"
-                                      IsEnabled="{Binding IsEnabled}"
-                                      CheckedChanged="OnDeviceCheckedChanged"
-                                      VerticalOptions="Center"
-                                      SemanticProperties.Description="Show this device in the tray popup" />
-                        </Grid>
-                    </DataTemplate>
-                </BindableLayout.ItemTemplate>
+                <BoxView HeightRequest="1" Opacity="0.2" />
+                <Label Text="Devices" FontSize="22" FontAttributes="Bold" />
+                <Label Text="Choose which of your devices appear in the tray popup. Devices are listed once they have been connected to this PC."
+                       FontSize="13" Opacity="0.7" />
+                <ActivityIndicator IsRunning="{Binding IsLoading}" IsVisible="{Binding IsLoading}" />
+                <Label Text="{Binding Error}" IsVisible="{Binding HasError}"
+                       TextColor="#DC2626" FontSize="12" />
+                <Label Text="No supported devices have been discovered."
+                       IsVisible="{Binding HasNoDevices}" Opacity="0.7" />
+                <VerticalStackLayout BindableLayout.ItemsSource="{Binding Devices}" Spacing="4">
+                    <BindableLayout.ItemTemplate>
+                        <DataTemplate>
+                            <Grid ColumnDefinitions="*,Auto" Padding="0,8" ColumnSpacing="20">
+                                <VerticalStackLayout Spacing="2">
+                                    <Label Text="{Binding Name}" FontAttributes="Bold" />
+                                    <Label Text="{Binding ConnectionText}" FontSize="12" Opacity="0.65" />
+                                    <Label Text="{Binding Error}" IsVisible="{Binding HasError}"
+                                           TextColor="#DC2626" FontSize="11" />
+                                </VerticalStackLayout>
+                                <CheckBox Grid.Column="1" IsChecked="{Binding IsSelected, Mode=OneWay}"
+                                          IsEnabled="{Binding IsEnabled}"
+                                          CheckedChanged="OnDeviceCheckedChanged"
+                                          VerticalOptions="Center"
+                                          SemanticProperties.Description="Show this device in the tray popup" />
+                            </Grid>
+                        </DataTemplate>
+                    </BindableLayout.ItemTemplate>
+                </VerticalStackLayout>
             </VerticalStackLayout>
-        </VerticalStackLayout>
-    </ScrollView>
+        </ScrollView>
+        <Label x:Name="VersionLabel" Grid.Row="1" Padding="28,8,28,16"
+               FontSize="12" Opacity="0.55" HorizontalOptions="Center" />
+    </Grid>
 </ContentPage>

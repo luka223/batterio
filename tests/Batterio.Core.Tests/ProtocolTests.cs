@@ -91,6 +91,68 @@ public sealed partial class ProtocolTests
         Assert.Throws<BatteryAdapterException>(() => LogitechBatteryDecoding.DecodeCenturion(Array.Empty<byte>()));
     }
 
+    [Theory]
+    [InlineData(0x00, BatteryChargeState.NotCharging)]
+    [InlineData(0x01, BatteryChargeState.Charging)]
+    [InlineData(0x02, BatteryChargeState.Charging)]
+    [InlineData(0x03, BatteryChargeState.NotCharging)]
+    [InlineData(0x04, BatteryChargeState.Charging)]
+    public void BatteryStatusFeatureMapsChargingStatuses(byte status, BatteryChargeState expected)
+    {
+        var reading = LogitechBatteryDecoding.DecodeBatteryStatus(new byte[] { 77, 50, status });
+
+        Assert.Equal(77, reading.Percentage);
+        Assert.Equal(expected, reading.ChargeState);
+    }
+
+    [Theory]
+    [InlineData(0x05, BatteryAdapterErrorKind.BatteryReportedError)]
+    [InlineData(0x06, BatteryAdapterErrorKind.BatteryReportedError)]
+    [InlineData(0x07, BatteryAdapterErrorKind.BatteryReportedError)]
+    [InlineData(0x08, BatteryAdapterErrorKind.MalformedResponse)]
+    public void BatteryStatusFeatureRejectsErrorAndUndefinedStatuses(byte status, BatteryAdapterErrorKind expected)
+    {
+        var exception = Assert.Throws<BatteryAdapterException>(() =>
+            LogitechBatteryDecoding.DecodeBatteryStatus(new byte[] { 0, 0, status }));
+        Assert.Equal(expected, exception.Kind);
+    }
+
+    [Fact]
+    public void BatteryStatusFeatureRejectsInvalidLevelsAndTruncatedReplies()
+    {
+        Assert.Equal(BatteryAdapterErrorKind.MalformedResponse, Assert.Throws<BatteryAdapterException>(() =>
+            LogitechBatteryDecoding.DecodeBatteryStatus(new byte[] { 101, 0, 0 })).Kind);
+        Assert.Equal(BatteryAdapterErrorKind.MalformedResponse, Assert.Throws<BatteryAdapterException>(() =>
+            LogitechBatteryDecoding.DecodeBatteryStatus(new byte[] { 50, 0 })).Kind);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 64, 0x08, 0x00, 0x00 }, true)]
+    [InlineData(new byte[] { 100, 0x08, 0x03, 0x01 }, true)]
+    [InlineData(new byte[] { 15, 0x04, 0x05, 0x00 }, true)]
+    [InlineData(new byte[] { 0, 0x04, 0x01, 0x00 }, false)]
+    public void UnifiedBatteryDecodingMatchesTheSuperstrikeDecoder(byte[] parameters, bool supportsPercentage)
+    {
+        Assert.Equal(
+            LogitechBatteryDecoding.DecodeSuperstrike(parameters, supportsPercentage),
+            LogitechBatteryDecoding.DecodeUnifiedBattery(parameters, supportsPercentage));
+    }
+
+    [Fact]
+    public void DeviceInformationListsEveryModelIdWithItsTransport()
+    {
+        // Entity count, unit ID (4), reserved, transport bitmap (BLE + eQuad), model IDs in transport order.
+        var parameters = new byte[] { 3, 1, 2, 3, 4, 0, 0x06, 0xB0, 0x34, 0x40, 0xBD };
+
+        var ids = LogitechDeviceInformation.GetModelIds(parameters);
+
+        Assert.Equal(new (byte, ushort)[] { (0x02, 0xB034), (0x04, 0x40BD) }, ids);
+        Assert.Equal("transport bitmap 0x06, model IDs: transport 0x02=0xB034, transport 0x04=0x40BD",
+            LogitechDeviceInformation.FormatModelIds(parameters));
+        Assert.Empty(LogitechDeviceInformation.GetModelIds(new byte[] { 3, 1, 2 }));
+        Assert.Equal("unavailable", LogitechDeviceInformation.FormatModelIds(new byte[] { 3, 1, 2 }));
+    }
+
     [Fact]
     public void CollectionQueriesMatchTheWholeReceiverIdentity()
     {

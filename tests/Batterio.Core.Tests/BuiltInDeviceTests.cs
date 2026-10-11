@@ -31,21 +31,27 @@ public sealed class BuiltInDeviceTests
     public async Task BuiltInDevicesContainTheShippedAdapters()
     {
         var devices = BuiltInDevices.Create();
-        Assert.Equal(3, devices.Count);
+        Assert.Equal(5, devices.Count);
         Assert.All(devices, device => Assert.Equal(300, device.PollIntervalSeconds));
         Assert.Equal(
-            new[] { "logitech-g-pro-x2-superstrike", "logitech-g-pro-x2-lightspeed", "steelseries-arctis-nova-pro-omni" },
+            new[]
+            {
+                "logitech-g-pro-x2-superstrike", "logitech-g-pro-x2-lightspeed", "steelseries-arctis-nova-pro-omni",
+                "logitech-mx-master-3s", "logitech-mx-keys-mechanical"
+            },
             devices.Select(device => device.AdapterId));
 
         await using var coordinator = new PollingCoordinator(new AdapterRegistry([
             new FixedFactory("logitech-g-pro-x2-superstrike", new BatteryReading(64, BatteryChargeState.NotCharging)),
             new FixedFactory("logitech-g-pro-x2-lightspeed", new BatteryReading(15, BatteryChargeState.Charging)),
-            new FixedFactory("steelseries-arctis-nova-pro-omni", new BatteryReading(90, BatteryChargeState.NotCharging))]));
+            new FixedFactory("steelseries-arctis-nova-pro-omni", new BatteryReading(90, BatteryChargeState.NotCharging)),
+            new FixedFactory("logitech-mx-master-3s", new BatteryReading(72, BatteryChargeState.NotCharging)),
+            new FixedFactory("logitech-mx-keys-mechanical", new BatteryReading(41, BatteryChargeState.Charging))]));
         var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var readings = 0;
         coordinator.StateChanged += (_, e) =>
         {
-            if (e.State.Percentage is not null && Interlocked.Increment(ref readings) == 3)
+            if (e.State.Percentage is not null && Interlocked.Increment(ref readings) == 5)
             {
                 ready.TrySetResult(true);
             }
@@ -57,11 +63,31 @@ public sealed class BuiltInDeviceTests
         Assert.Equal("Logitech G Pro X2 Lightspeed", coordinator.States.Single(state => state.Configuration.Id == "logitech-g-pro-x2-lightspeed").Configuration.Name);
         Assert.Equal(64, coordinator.States.Single(state => state.Configuration.Id == "logitech-g-pro-x2-superstrike").Percentage);
         Assert.Equal(15, coordinator.States.Single(state => state.Configuration.Id == "logitech-g-pro-x2-lightspeed").Percentage);
+        Assert.Equal("Logitech MX Master 3S", coordinator.States.Single(state => state.Configuration.Id == "logitech-mx-master-3s").Configuration.Name);
+        Assert.Equal(41, coordinator.States.Single(state => state.Configuration.Id == "logitech-mx-keys-mechanical").Percentage);
         Assert.Equal(BatteryChargeState.Charging, coordinator.States.Single(state => state.Configuration.Id == "logitech-g-pro-x2-lightspeed").State);
 
         await coordinator.RefreshAllAsync().WaitAsync(TimeSpan.FromSeconds(2));
         await coordinator.RefreshDeviceAsync(devices[0].Id).WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(7, readings);
+        Assert.Equal(11, readings);
+    }
+
+    [Fact]
+    public void MxDevicesShareTheBoltReceiverPresenceQuery()
+    {
+        foreach (var id in new[] { "logitech-mx-master-3s", "logitech-mx-keys-mechanical" })
+        {
+            var device = BuiltInDevices.Catalog.Single(entry => entry.Id == id);
+            Assert.Same(LogitechReceiverDefinitions.BoltReceiverQuery, Assert.Single(device.PresenceQueries));
+        }
+
+        var query = LogitechReceiverDefinitions.BoltReceiverQuery;
+        Assert.Equal((ushort)0x046D, query.VendorId);
+        Assert.Equal((ushort)0xC548, query.ProductId);
+        Assert.Equal((ushort)2, query.InterfaceNumber);
+        Assert.Equal((ushort)0xFF00, query.UsagePage);
+        Assert.Equal(20, query.MinimumReportLength);
+        Assert.Equal((byte)0x11, query.RequiredReportId);
     }
 
     [Fact]
@@ -93,11 +119,15 @@ public sealed class BuiltInDeviceTests
         await using var superstrike = new LogitechGProX2SuperstrikeAdapter();
         await using var lightspeed = new LogitechGProX2LightspeedAdapter();
         await using var omni = new SteelSeriesArctisNovaProOmniAdapter();
+        await using var mxMaster = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s);
+        await using var mxKeys = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxKeysMechanical);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => superstrike.GetBatteryStatus(cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lightspeed.GetBatteryStatus(cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => omni.GetBatteryStatus(cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => mxMaster.GetBatteryStatus(cancellation.Token));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => mxKeys.GetBatteryStatus(cancellation.Token));
     }
 
     private sealed class FixedFactory(string adapterId, BatteryReading reading) : IBatteryAdapterFactory

@@ -159,6 +159,46 @@ public sealed class StartupRegistrationTests
         Assert.Same(failure, actual);
     }
 
+    [Fact]
+    public async Task RefreshRewritesAStaleEntryToTheCurrentExecutable()
+    {
+        using var fixture = new TempFile();
+        var registry = new FakeRegistry();
+        var service = new WindowsStartupRegistrationService(registry, () => fixture.Path);
+        registry.Key.SetValue(WindowsStartupRegistrationService.AppName, "\"C:\\old\\Batterio.exe\"", RegistryValueKind.String);
+
+        Assert.True(await service.RefreshRegistrationAsync());
+
+        Assert.Equal($"\"{Path.GetFullPath(fixture.Path)}\"", registry.Key.Values[WindowsStartupRegistrationService.AppName]);
+        Assert.True(await service.IsRegisteredAsync());
+        Assert.False(await service.RefreshRegistrationAsync());
+    }
+
+    [Fact]
+    public async Task RefreshRewritesAnExpandStringEntryAsString()
+    {
+        using var fixture = new TempFile();
+        var registry = new FakeRegistry();
+        var service = new WindowsStartupRegistrationService(registry, () => fixture.Path);
+        registry.Key.SetValue(WindowsStartupRegistrationService.AppName, $"\"{Path.GetFullPath(fixture.Path)}\"", RegistryValueKind.ExpandString);
+
+        Assert.True(await service.RefreshRegistrationAsync());
+
+        Assert.Equal(RegistryValueKind.String, registry.Key.Kinds[WindowsStartupRegistrationService.AppName]);
+    }
+
+    [Fact]
+    public async Task RefreshLeavesStartupOffWhenThereIsNoEntry()
+    {
+        using var fixture = new TempFile();
+        var registry = new FakeRegistry();
+        var service = new WindowsStartupRegistrationService(registry, () => fixture.Path);
+
+        Assert.False(await service.RefreshRegistrationAsync());
+
+        Assert.False(registry.Key.Values.ContainsKey(WindowsStartupRegistrationService.AppName));
+    }
+
     private sealed class FakeRegistry : IStartupRegistry
     {
         public FakeKey Key { get; } = new();
