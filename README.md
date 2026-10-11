@@ -13,9 +13,21 @@ Left-click the tray icon to open the popup, right-click it for the menu (Setting
 
 ## Screenshots
 
-| Popup | Tray menu | Settings |
-| --- | --- | --- |
-| ![Popup](docs/screenshots/popup2.png) | ![Tray menu](docs/screenshots/tray-menu.png) | ![Settings](docs/screenshots/settings.png) |
+- **Popup**
+
+  ![Popup](docs/screenshots/popup2.png)
+
+- **Disabled (turned off) device**
+
+  ![Disabled device](docs/screenshots/disabled-device.png)
+
+- **Tray menu**
+
+  ![Tray menu](docs/screenshots/tray-menu.png)
+
+- **Settings**
+
+  ![Settings](docs/screenshots/settings2.png)
 
 ## Technologies
 
