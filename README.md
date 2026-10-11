@@ -113,7 +113,7 @@ dotnet run --project tests/Batterio.NotificationProbe -c Release -- history-full
 
 Tray popup:
 
-![Batterio popup](docs/screenshots/popup.png)
+![Batterio popup](docs/screenshots/popup2.png)
 
 Tray menu:
 

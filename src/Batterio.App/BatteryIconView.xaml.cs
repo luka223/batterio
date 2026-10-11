@@ -26,16 +26,16 @@ public partial class BatteryIconView : ContentView
         _segments = Enumerable.Range(0, SegmentCount)
             .Select(_ => new Border
             {
-                WidthRequest = 2.8,
-                HeightRequest = 10,
+                HorizontalOptions = LayoutOptions.Fill,
+                VerticalOptions = LayoutOptions.Fill,
                 StrokeThickness = 0,
-                StrokeShape = new RoundRectangle { CornerRadius = 1 },
                 IsVisible = false
             })
             .ToArray();
-        foreach (var segment in _segments)
+        for (var index = 0; index < _segments.Length; index++)
         {
-            Segments.Add(segment);
+            Segments.ColumnDefinitions.Add(new ColumnDefinition(GridLength.Star));
+            Segments.Add(_segments[index], index, 0);
         }
 
         UpdateSegments();

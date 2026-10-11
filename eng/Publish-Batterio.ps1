@@ -82,6 +82,11 @@ Invoke-Publish "src\Batterio.Startup\Batterio.Startup.csproj" $launcherStage -Na
 
 Get-ChildItem -LiteralPath $runtimeStage -Force | Copy-Item -Destination $bundleStage -Recurse -Force
 
+# Only English is supported; drop the localized Windows App SDK / WinUI resource folders (keep en-us).
+Get-ChildItem -LiteralPath $bundleStage -Directory |
+    Where-Object { $_.Name -match '^[a-z]{2,3}(-[A-Za-z0-9]+)+$' -and $_.Name -ne "en-us" } |
+    Remove-Item -Recurse -Force
+
 $launcherExecutable = Join-Path $launcherStage "Batterio.App.exe"
 $runtimeExecutable = Join-Path $bundleStage "Batterio.Runtime.exe"
 $runtimeAssembly = Join-Path $bundleStage "Batterio.Runtime.dll"

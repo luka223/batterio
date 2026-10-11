@@ -10,7 +10,7 @@
         <Border WidthRequest="36" HeightRequest="18" Padding="2" HorizontalOptions="Start"
                 Stroke="{Binding BatteryColor, Source={x:Reference Root}}"
                 StrokeThickness="2" StrokeShape="RoundRectangle 3">
-            <HorizontalStackLayout x:Name="Segments" Spacing="0" />
+            <Grid x:Name="Segments" ColumnSpacing="0" />
         </Border>
         <Border WidthRequest="3" HeightRequest="6" Margin="36,0,0,0"
                 HorizontalOptions="Start" VerticalOptions="Center"
