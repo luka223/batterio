@@ -9,7 +9,8 @@ public static class InstalledExecutableResolver
 {
     public static InstalledExecutablePaths Resolve(
         string? baseDirectory = null,
-        Func<string, bool>? fileExists = null)
+        Func<string, bool>? fileExists = null,
+        string? bundledLauncherPath = null)
     {
         fileExists ??= File.Exists;
         var root = baseDirectory ?? AppContext.BaseDirectory;
@@ -27,7 +28,12 @@ public static class InstalledExecutableResolver
             throw new InvalidOperationException("The Batterio installation directory is invalid.", exception);
         }
 
-        var launcher = Path.GetFullPath(Path.Combine(root, StartupConstants.LauncherExecutableName));
+        // A single-file Batterio.exe runs the runtime from an unpacked copy and names itself here;
+        // startup and toast registration must point at that file, not at the copy.
+        bundledLauncherPath ??= Environment.GetEnvironmentVariable(StartupConstants.LauncherPathEnvironmentVariable);
+        var launcher = IsUsableBundledLauncher(bundledLauncherPath, fileExists)
+            ? Path.GetFullPath(bundledLauncherPath!)
+            : Path.GetFullPath(Path.Combine(root, StartupConstants.LauncherExecutableName));
         var runtime = Path.GetFullPath(Path.Combine(root, StartupConstants.RuntimeExecutableName));
         if (string.Equals(launcher, runtime, StringComparison.OrdinalIgnoreCase))
         {
@@ -42,4 +48,10 @@ public static class InstalledExecutableResolver
 
         return new InstalledExecutablePaths(launcher, runtime);
     }
+
+    private static bool IsUsableBundledLauncher(string? path, Func<string, bool> fileExists) =>
+        !string.IsNullOrWhiteSpace(path) &&
+        Path.IsPathFullyQualified(path) &&
+        Path.GetExtension(path).Equals(".exe", StringComparison.OrdinalIgnoreCase) &&
+        fileExists(path);
 }

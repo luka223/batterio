@@ -10,6 +10,7 @@ obj/
 .manual-localappdata/
 .nuget/
 publish/
+publish-self-contained/
 *.user
 *.suo
 

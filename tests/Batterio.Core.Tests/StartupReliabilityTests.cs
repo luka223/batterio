@@ -103,6 +103,31 @@ public sealed class StartupReliabilityTests
     }
 
     [Fact]
+    public void InstalledResolverPrefersTheSingleFileLauncher()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "Batterio-resolver-" + Guid.NewGuid().ToString("N"));
+        var bundled = Path.Combine(Path.GetTempPath(), "Batterio-downloads", "Batterio.exe");
+        var paths = InstalledExecutableResolver.Resolve(root, path =>
+            path.EndsWith(StartupConstants.RuntimeExecutableName, StringComparison.OrdinalIgnoreCase) ||
+            path.Equals(bundled, StringComparison.OrdinalIgnoreCase), bundled);
+
+        Assert.Equal(bundled, paths.LauncherPath);
+        Assert.Equal(Path.Combine(Path.GetFullPath(root), StartupConstants.RuntimeExecutableName), paths.RuntimePath);
+    }
+
+    [Fact]
+    public void InstalledResolverIgnoresAMissingSingleFileLauncher()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "Batterio-resolver-" + Guid.NewGuid().ToString("N"));
+        var bundled = Path.Combine(Path.GetTempPath(), "Batterio-missing", "Batterio.exe");
+        var paths = InstalledExecutableResolver.Resolve(root, path =>
+            path.EndsWith(StartupConstants.LauncherExecutableName, StringComparison.OrdinalIgnoreCase) ||
+            path.EndsWith(StartupConstants.RuntimeExecutableName, StringComparison.OrdinalIgnoreCase), bundled);
+
+        Assert.Equal(Path.Combine(Path.GetFullPath(root), StartupConstants.LauncherExecutableName), paths.LauncherPath);
+    }
+
+    [Fact]
     public void InstalledResolverRejectsAnIncompleteFolder()
     {
         var root = Path.Combine(Path.GetTempPath(), "Batterio-resolver-" + Guid.NewGuid().ToString("N"));

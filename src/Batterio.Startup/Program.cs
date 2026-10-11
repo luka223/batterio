@@ -11,6 +11,21 @@ internal static class Program
         try
         {
             var installationDirectory = Path.GetFullPath(AppContext.BaseDirectory);
+            var launcherPath = Environment.ProcessPath;
+            var payloadDirectory = launcherPath is null
+                ? null
+                : EmbeddedPayload.TryPrepare(launcherPath, EmbeddedPayload.DefaultCacheRoot, StartupConstants.RuntimeExecutableName);
+            if (payloadDirectory is not null)
+            {
+                installationDirectory = payloadDirectory;
+            }
+
+            // A single-file launcher runs the runtime from an unpacked copy; naming this file lets the
+            // runtime register it, rather than the copy, for Windows startup and toast activation.
+            Environment.SetEnvironmentVariable(
+                StartupConstants.LauncherPathEnvironmentVariable,
+                payloadDirectory is null ? null : launcherPath);
+
             var supervisor = new StartupSupervisor(
                 installationDirectory,
                 Path.Combine(installationDirectory, StartupConstants.RuntimeExecutableName),

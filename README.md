@@ -1,10 +1,42 @@
 # Batterio
 
-Batterio is a Windows 11 x64 .NET 10 / .NET MAUI tray battery monitor. The app ships with Logitech G Pro X2 Superstrike, Logitech G Pro X2 Lightspeed and SteelSeries Arctis Nova Pro Omni devices. The Superstrike adapter can query the mouse through its receiver or direct USB-C cable; the Lightspeed adapter queries its paired headset through the receiver; the Omni adapter queries the headset and the reserve battery in the hub's charging slot through the hub's USB connection. Adapters publish one of three states: `Charging`, `NotCharging`, or `Offline`, with an optional percentage for the first two.
+A Windows 11 x64 system tray app that shows the battery level of wireless gaming peripherals.
+
+Supported devices:
+
+- **Logitech G Pro X2 Superstrike**: over USB-C cable or Lightspeed receiver
+- **Logitech G Pro X2 Lightspeed**: through its receiver
+- **SteelSeries Arctis Nova Pro Omni**: headset and reserve battery through the GameHub (hub must be in **USB-1** mode)
+
+Left-click the tray icon to open the popup, right-click it for the menu (Settings, Close). Batterio sends a Windows notification once per run when a device drops below 30% and when it is fully charged.
+
+## Screenshots
+
+| Popup | Tray menu | Settings |
+| --- | --- | --- |
+| ![Popup](docs/screenshots/popup2.png) | ![Tray menu](docs/screenshots/tray-menu.png) | ![Settings](docs/screenshots/settings.png) |
+
+## Technologies
+
+- .NET 10 (SDK pinned in `global.json`) and .NET MAUI on WinUI / Windows App SDK
+- Raw HID communication (Logitech HID++, SteelSeries vendor protocol)
+- NativeAOT launcher that starts and supervises the WinUI runtime process
+
+## Project layout
+
+| Path | Purpose |
+| --- | --- |
+| `src/Batterio.Core` | Device adapters, polling, notifications logic, settings |
+| `src/Batterio.App` | MAUI/WinUI tray app and popup (`Batterio.Runtime.exe`) |
+| `src/Batterio.Startup` | NativeAOT launcher (`Batterio.App.exe` / `Batterio.exe`) |
+| `tests/` | Unit tests plus manual startup and notification probes |
+| `eng/` | Publish scripts |
+
+New devices are added by implementing `IBatteryAdapterFactory` / `IBatteryAdapter` and registering them in `MauiProgram` and `BuiltInDevices.Create()`.
 
 ## Build and run
 
-The repository pins the .NET SDK in `global.json` and uses the installed .NET MAUI Windows workload.
+Requires the .NET 10 SDK, the .NET MAUI Windows workload and Visual Studio C++ x64 build tools.
 
 ```powershell
 dotnet restore Batterio.sln --configfile NuGet.Config --runtime win-x64
@@ -13,112 +45,29 @@ dotnet test Batterio.sln -c Release --no-build
 dotnet run --project src/Batterio.App/Batterio.App.csproj -c Debug
 ```
 
-The application runs entirely from the system tray, with no separate main window or taskbar/Alt+Tab entry. Single-click the icon to toggle the compact popup, double-click to show it, and right-click for the application menu. Clicking outside the popup hides it; choose Settings to manage startup and connected-device visibility, or Close to stop the process.
-
-## Devices and refresh
-
-Devices are defined in code in `src/Batterio.Core/Adapters/BuiltInDevices.cs`. A device is connected when any supported HID collection is discovered; discovery never sends battery requests. Superstrike checks the direct USB-C endpoint first and falls back to its receiver only when no wired collection is present. Lightspeed uses its receiver. The Arctis Nova Pro Omni is found through its hub's vendor status collection (VID `0x1038`, PID `0x2290`, HID interface 3, usage page `0xFFC0`); the hub's mode switch must be on **USB-1**, because the USB-2 and XBOX modes do not answer. Batterio scans at startup, when Settings or the popup opens, after resume, and every five seconds while running. The app does not create or load device configuration files.
-
-Device visibility choices are stored at `%LocalAppData%\Batterio\settings.json`. Missing device IDs are selected by default, and choices for disconnected devices are retained. Settings checkbox changes are saved immediately; there is no Apply button. Only selected, currently discovered devices are polled, and removing a selection immediately removes its popup row and stops new queries.
-
-It polls each active device at its configured interval (five minutes for the built-in devices). The popup refresh icon polls active devices immediately. Polling continues while the popup is hidden.
-
-When a successful device reading is below 30%, Batterio sends one native Windows notification for that device during the current application run: `{Device name} battery level is below 30%`. When a device is first observed at 100%, Batterio sends `{Device name} battery is fully charged`; either `Charging` or `NotCharging` qualifies. The first successful 100% reading counts, including an initial reading during startup. Each notification type is sent once per device ID per application run. Repeated refreshes, a drop below 100%, reconnects, and deselection/reselection do not rearm the fully charged notification until Batterio restarts. The low battery notification follows the same once-per-run policy. Windows notification permissions and Do Not Disturb control whether Windows presents the submitted notification. Notifications for the Arctis Nova Pro Omni follow the headset battery only; its reserve battery never triggers a low or fully charged notification. Clicking either notification opens the existing Batterio popup.
-
-The popup sizes itself to the device content and grows with the device list up to a scrollable maximum height. Each device is shown on one row with a 52px photo, its name, a compact battery icon, and an optional percentage. Battery colors are green above 40%, yellow from 20% through 40%, and red below 20%. `Charging` uses a full green silhouette with a centered bolt; a Superstrike that reports a completed charge while external power is connected keeps the bolt visible at 100%. `NotCharging` uses ten segments; and `Offline` uses an empty gray battery and gray device presentation. An Offline result clears any prior percentage immediately, including while retries are in progress.
-
-The Arctis Nova Pro Omni row stacks two battery icons. The top icon is the headset battery with the colors and bolt described above. The bottom icon is the reserve battery in the hub's charging slot: same shape, segments and percentage, but a fixed white (`#FFFFFF`) in the dark theme and near-black (`#18181B`) in the light theme, with a bolt while it charges. The hub reports no reserve-charging flag, so the reserve counts as charging whenever it is below 100%. If the headset is switched off but the hub is connected, the photo, name and top battery turn gray while the reserve battery stays live; if the hub is unplugged, the whole row is Offline and both percentages disappear. The reserve icon and its percentage are hidden whenever there is no reserve reading, that is when the slot is empty (the hub reports `0`) or the hub is unplugged, so the row then looks like a single-battery device. If the hub does not answer the first status request (it can need a few seconds after it appears), the adapter retries once after a short settle delay. There is no separate setting for the reserve battery: the Settings device checkbox shows or hides the whole row.
-
-## Diagnostics
-
-Logs are written to `%LocalAppData%\Batterio\Logs\batterio.log` with up to two rotated files, each bounded to approximately 512 KiB. Logs include device and adapter IDs where relevant and never serialize complete adapter settings. Set `BATTERIO_TRACE_HID=1` before launching Batterio to opt into hexadecimal HID TX/RX packet traces in the same bounded log. Leave it unset for routine use.
-
-“Start automatically when Windows starts” controls the current-user `Software\Microsoft\Windows\CurrentVersion\Run` value named `Batterio`. The entry points to `Batterio.App.exe` in the installed folder. Windows runs that entry at user sign-in and may delay it; Startup Apps policy remains authoritative.
-
-## Adding an adapter
-
-1. Implement `IBatteryAdapterFactory` with a stable `AdapterId`.
-2. Use `ValidateSettings` only if your adapter needs settings supplied in code.
-3. Create one adapter instance for each `DeviceConfiguration` in `CreateAdapter`.
-4. Implement `IBatteryAdapter.GetBatteryStatus`, returning a `BatteryReading` with an optional percentage and one of the three `BatteryChargeState` values: `Charging`, `NotCharging`, or `Offline`. Offline readings must not contain a percentage.
-5. Honor cancellation, release transport resources in `DisposeAsync`, and add contract tests for success, errors, timeout, cancellation, invalid values, and disposal.
-6. Register the factory explicitly in `MauiProgram` and add its device to `BuiltInDevices.Create()`. No JSON file is needed.
-
-Adapters must use cooperative cancellation. If a device ignores cancellation, Batterio marks the current reading Offline immediately but retains the adapter call's concurrency slot until it actually finishes; late results are discarded when the active device list is replaced. The built-in Logitech adapters accept an optional nonempty `devicePath` setting to select a specific supported HID++ endpoint, and the SteelSeries adapter accepts the same setting to select a specific hub status collection. For Superstrike, that path can identify either the wired USB-C collection or the receiver collection; an explicit path overrides wired-first automatic selection, and an explicit missing path is never replaced with another endpoint.
+Hardware tests are opt-in: set `BATTERIO_HARDWARE_TESTS=1` with the devices connected.
 
 ## Publish
 
-The supported delivery is one unpackaged, self-contained `win-x64` folder. It contains the public NativeAOT launcher `Batterio.App.exe`, the private WinUI process `Batterio.Runtime.exe`, the Windows App SDK 2.4.0 files, and the app icon. Deploy the complete folder; the launcher and runtime are designed to stay together.
+Both scripts produce a self-contained `win-x64` build; no .NET or Windows App Runtime install is needed on the target machine.
+
+**Folder build**: outputs the `publish` folder. Copy the whole folder and run `Batterio.App.exe` from it.
 
 ```powershell
 .\eng\Publish-Batterio.ps1
 & .\publish\Batterio.App.exe
 ```
 
-The publish script produces the verified Release build and atomically replaces the `publish` folder. The last command runs its public launcher. To install or copy the application elsewhere, copy the complete `publish` folder and run `Batterio.App.exe` from that folder; do not run `Batterio.Runtime.exe` directly or copy either executable by itself.
-
-`Batterio.App.exe` is the stable entry point for Start, the Run key, and cold notification activation. It starts `Batterio.Runtime.exe` in the installation folder, passes through activation arguments, and waits for the runtime readiness event. The runtime arbitrates the existing `Batterio.SingleInstance` identity before starting WinUI. Warm notification activations are redirected to the existing runtime; cold activations start the launcher and then the runtime.
-
-The launcher makes at most five runtime attempts, after delays of 0, 1, 3, 10, and 30 seconds. An attempt succeeds when runtime startup signals readiness after the tray is available, notifications have initialized or safely degraded, and selection and polling have started. Each attempt has 60 seconds to signal readiness. A runtime that exits unsuccessfully at readiness or remains alive without becoming ready is recorded as a failed attempt; a timed-out child process tree is terminated before the launcher starts the next attempt. The launcher also waits up to 60 seconds for the Windows shell before launching anyway.
-
-The tray keeps retrying Explorer-dependent icon registration indefinitely. Retry delays are 1, 2, 5, and 10 seconds, then 30 seconds for subsequent attempts. When Explorer restarts, Batterio removes stale tray state and attempts to add the icon immediately.
-
-The publish script builds both executables in a staging directory, verifies their names and sizes, checks the NativeAOT launcher imports, rejects an unexpected launcher runtime configuration file, verifies the icon and Windows App SDK files, and replaces `publish` only after the staged bundle passes. Its verification summary prints product versions, sizes, and SHA-256 hashes for both executables. Build prerequisites are the .NET 10 SDK and Visual Studio C++ x64 build tools; the distributed folder does not require a separate .NET or Windows App Runtime installation.
-
-The launcher writes bounded startup diagnostics to `%LocalAppData%\Batterio\Logs\startup.log`. Records include its product version, attempt, child PID, exit code, readiness result, and final failure, without storing user arguments or event names.
-
-On notification initialization, Batterio creates or repairs the current-user Start Menu shortcut with App ID `com.batterio.tray` and the existing toast activator CLSID. Its COM activation command targets `Batterio.App.exe` with `-ToastActivated`; notification clicks wait until the popup dispatcher is ready. The Run value name, App ID, tray GUID, and toast CLSID remain compatible with existing installations. These registrations intentionally remain after exit. When permanently removing the portable app, remove `%AppData%\Microsoft\Windows\Start Menu\Programs\Batterio.lnk` and `HKCU\Software\Classes\CLSID\{B68D18D7-6B67-4C24-993C-B597D789E895}`.
-
-Run automated tests with `dotnet test Batterio.sln -c Debug` and `dotnet test Batterio.sln -c Release`. Tests that communicate with real HID hardware remain opt-in. Set `BATTERIO_HARDWARE_TESTS=1` to run the separate Superstrike wired USB-C and receiver smoke tests, which force the matching `devicePath`; the wired smoke test verifies a percentage and a charging state. The Arctis Nova Pro Omni smoke test (`--filter NovaProOmni`) needs the hub on USB-1 and verifies a valid headset reading and, when a battery sits in the slot, a reserve between 1 and 100%; `OmniHidCollectionsAreListed` and `OmniRawStatusProbe` print the hub's HID collections and a raw `01 B0` status reply for protocol debugging. Destructive launcher, Explorer, sign-in, reboot, and Run-key upgrade scenarios belong in a disposable Windows 11 x64 VM. `tests/Batterio.StartupProbe` provides a self-contained runtime substitute for those launcher-attempt scenarios; it is excluded from the production publish.
-
-The `publish` folder should be tested as a complete installation before distribution. The current Windows acceptance matrix and commands are recorded in [CHANGELOG.md](CHANGELOG.md).
-
-## Startup acceptance probe
-
-`tests/Batterio.StartupProbe` is a test-only NativeAOT process for launcher retry scenarios. Build it on a Windows build machine:
+**Single-file build**: outputs a single `publish-self-contained\Batterio.exe`. On first start it unpacks itself to `%LocalAppData%\Batterio\Runtime`.
 
 ```powershell
-$probePublishFolder = Join-Path $env:TEMP 'Batterio.StartupProbe'
-dotnet publish tests/Batterio.StartupProbe/Batterio.StartupProbe.csproj -c Release -r win-x64 --self-contained true -o $probePublishFolder
+.\eng\Publish-Batterio-self-contained.ps1
+& .\publish-self-contained\Batterio.exe
 ```
 
-Copy the verified `publish` folder and `Batterio.StartupProbe.exe` into a disposable Windows 11 x64 VM. In that VM, replace only the copied runtime apphost and run the public launcher:
+## Data and diagnostics
 
-```powershell
-$acceptanceFolder = Join-Path $env:TEMP 'Batterio.Acceptance'
-$probeExecutable = Join-Path $env:TEMP 'Batterio.StartupProbe.exe'
-$attemptStateFile = Join-Path $env:TEMP 'Batterio.StartupProbe.attempts'
-Copy-Item -LiteralPath $probeExecutable -Destination (Join-Path $acceptanceFolder 'Batterio.Runtime.exe') -Force
-& (Join-Path $acceptanceFolder 'Batterio.App.exe') --state-file $attemptStateFile --fail-before-ready 4
-```
-
-The probe records its launch count in the supplied state file, exits before readiness for the configured number of launches, and then signals readiness and stays alive. Use a fresh state file for each scenario. Set `--fail-before-ready 5` to verify five failures produce no sixth launch. Add `--ready-then-exit-ms 1000` to signal readiness and exit normally after one second. The probe does not implement the app's single-instance or tray behavior, so use the real runtime for those acceptance scenarios. Never replace the runtime in a normal installation with this probe.
-
-## Notification developer probe
-
-For manual toast checks on a Windows developer machine, run the published app once to create its current-user activation registration, then run:
-
-```powershell
-dotnet run --project tests/Batterio.NotificationProbe -c Release -- notify
-dotnet run --project tests/Batterio.NotificationProbe -c Release -- notify-fully-charged
-dotnet run --project tests/Batterio.NotificationProbe -c Release -- activate
-dotnet run --project tests/Batterio.NotificationProbe -c Release -- activate-fully-charged
-dotnet run --project tests/Batterio.NotificationProbe -c Release -- history
-dotnet run --project tests/Batterio.NotificationProbe -c Release -- history-fully-charged
-```
-
-`notify` submits one native low battery test toast despite repeated low readings. `notify-fully-charged` submits one native fully charged test toast despite repeated 100% readings. Inspect the exact text, Batterio identity, Notification Center persistence, and click behavior while the app runs and after exiting it. `activate` and `activate-fully-charged` directly exercise the COM callback with each toast's launch argument and request cold activation when needed; verify the process path as well as the return result. `history` and `history-fully-charged` read back the matching probe toast from Windows notification history. These commands are manual diagnostics and do not replace clean-machine acceptance in the disposable VM.
-
-## Screenshots
-
-Tray popup:
-
-![Batterio popup](docs/screenshots/popup2.png)
-
-Tray menu:
-
-![Batterio tray menu](docs/screenshots/tray-menu.png)
-
-Settings:
-
-![Batterio settings](docs/screenshots/settings.png)
+- Settings: `%LocalAppData%\Batterio\settings.json`
+- Logs: `%LocalAppData%\Batterio\Logs\` (`batterio.log`, `startup.log`)
+- Set `BATTERIO_TRACE_HID=1` to log raw HID packets.
+- To fully remove the app, also delete `%AppData%\Microsoft\Windows\Start Menu\Programs\Batterio.lnk` and `HKCU\Software\Classes\CLSID\{B68D18D7-6B67-4C24-993C-B597D789E895}`.
