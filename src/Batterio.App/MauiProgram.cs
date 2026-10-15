@@ -21,6 +21,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<IProcessTerminator, EnvironmentProcessTerminator>();
         builder.Services.AddSingleton(StartupReadiness.Current ?? StartupReadiness.CaptureFromEnvironment());
         builder.Services.AddSingleton<IHidCollectionProvider, WindowsHidCollectionProvider>();
+        builder.Services.AddSingleton<IBatteryAdapterFactory, KeychronQ1HeAdapterFactory>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2SuperstrikeAdapterFactory>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2LightspeedAdapterFactory>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, SteelSeriesArctisNovaProOmniAdapterFactory>();

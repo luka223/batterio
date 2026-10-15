@@ -145,6 +145,16 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     }
 
     [HardwareFact]
+    public async Task KeychronQ1HeReportsThroughLinkReceiver()
+    {
+        await using var adapter = new KeychronQ1HeAdapter(new WindowsHidCollectionProvider(), new TestLog(output));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var reading = await adapter.GetBatteryStatus(timeout.Token);
+        output.WriteLine($"Keychron Q1 HE: {reading.Percentage}% ({reading.ChargeState})");
+        Assert.NotEqual(BatteryChargeState.Offline, reading.ChargeState);
+    }
+
+    [HardwareFact]
     public async Task MxMaster3sCanBeQueried()
     {
         await using var adapter = new LogitechBoltAdapter(

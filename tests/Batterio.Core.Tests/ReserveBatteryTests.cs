@@ -82,6 +82,7 @@ public sealed class ReserveBatteryTests
     {
         var registry = new AdapterRegistry(
         [
+            new KeychronQ1HeAdapterFactory(),
             new LogitechGProX2SuperstrikeAdapterFactory(),
             new LogitechGProX2LightspeedAdapterFactory(),
             new SteelSeriesArctisNovaProOmniAdapterFactory(),

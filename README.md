@@ -4,6 +4,7 @@ A Windows 11 x64 system tray app that shows the battery level of wireless gaming
 
 Supported devices:
 
+- **Keychron Q1 HE**: battery through the **Keychron Link** 2.4 GHz receiver. This requires **custom firmware** that makes the keyboard report its battery; with the stock firmware, or while the keyboard is asleep or off, it shows as offline. The firmware is available in [luka223/qmk_firmware](https://github.com/luka223/qmk_firmware). **Flash it at your own risk**: flashing custom firmware can brick your keyboard and may void its warranty.
 - **Logitech G Pro X2 Superstrike**: over USB-C cable or Lightspeed receiver
 - **Logitech G Pro X2 Lightspeed**: through its receiver
 - **SteelSeries Arctis Nova Pro Omni**: headset and reserve battery through the GameHub (hub must be in **USB-1** mode)

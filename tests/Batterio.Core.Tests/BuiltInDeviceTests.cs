@@ -31,17 +31,18 @@ public sealed class BuiltInDeviceTests
     public async Task BuiltInDevicesContainTheShippedAdapters()
     {
         var devices = BuiltInDevices.Create();
-        Assert.Equal(5, devices.Count);
+        Assert.Equal(6, devices.Count);
         Assert.All(devices, device => Assert.Equal(300, device.PollIntervalSeconds));
         Assert.Equal(
             new[]
             {
-                "logitech-g-pro-x2-superstrike", "logitech-g-pro-x2-lightspeed", "steelseries-arctis-nova-pro-omni",
+                "keychron-q1-he", "logitech-g-pro-x2-superstrike", "logitech-g-pro-x2-lightspeed", "steelseries-arctis-nova-pro-omni",
                 "logitech-mx-master-3s", "logitech-mx-keys-mechanical"
             },
             devices.Select(device => device.AdapterId));
 
         await using var coordinator = new PollingCoordinator(new AdapterRegistry([
+            new FixedFactory("keychron-q1-he", new BatteryReading(100, BatteryChargeState.NotCharging)),
             new FixedFactory("logitech-g-pro-x2-superstrike", new BatteryReading(64, BatteryChargeState.NotCharging)),
             new FixedFactory("logitech-g-pro-x2-lightspeed", new BatteryReading(15, BatteryChargeState.Charging)),
             new FixedFactory("steelseries-arctis-nova-pro-omni", new BatteryReading(90, BatteryChargeState.NotCharging)),
@@ -51,7 +52,7 @@ public sealed class BuiltInDeviceTests
         var readings = 0;
         coordinator.StateChanged += (_, e) =>
         {
-            if (e.State.Percentage is not null && Interlocked.Increment(ref readings) == 5)
+            if (e.State.Percentage is not null && Interlocked.Increment(ref readings) == 6)
             {
                 ready.TrySetResult(true);
             }
@@ -69,7 +70,24 @@ public sealed class BuiltInDeviceTests
 
         await coordinator.RefreshAllAsync().WaitAsync(TimeSpan.FromSeconds(2));
         await coordinator.RefreshDeviceAsync(devices[0].Id).WaitAsync(TimeSpan.FromSeconds(2));
-        Assert.Equal(11, readings);
+        Assert.Equal(13, readings);
+    }
+
+    [Fact]
+    public void KeychronQ1HeIsFirstAndUsesTheLinkRawHidQuery()
+    {
+        var device = BuiltInDevices.Catalog[0];
+        Assert.Equal("keychron-q1-he", device.Id);
+        Assert.Same(KeychronDefinitions.LinkRawHidQuery, Assert.Single(device.PresenceQueries));
+
+        var query = KeychronDefinitions.LinkRawHidQuery;
+        Assert.Equal((ushort)0x3434, query.VendorId);
+        Assert.Equal((ushort)0xD030, query.ProductId);
+        Assert.Equal((ushort)3, query.InterfaceNumber);
+        Assert.Equal((ushort)0xFF60, query.UsagePage);
+        Assert.Equal((ushort)0x0061, query.Usage);
+        Assert.Equal(33, query.MinimumReportLength);
+        Assert.Null(query.RequiredReportId);
     }
 
     [Fact]
@@ -116,6 +134,7 @@ public sealed class BuiltInDeviceTests
     [Fact]
     public async Task TestAdaptersHonorCancellation()
     {
+        await using var keychron = new KeychronQ1HeAdapter();
         await using var superstrike = new LogitechGProX2SuperstrikeAdapter();
         await using var lightspeed = new LogitechGProX2LightspeedAdapter();
         await using var omni = new SteelSeriesArctisNovaProOmniAdapter();
@@ -123,6 +142,7 @@ public sealed class BuiltInDeviceTests
         await using var mxKeys = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxKeysMechanical);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => keychron.GetBatteryStatus(cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => superstrike.GetBatteryStatus(cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => lightspeed.GetBatteryStatus(cancellation.Token));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => omni.GetBatteryStatus(cancellation.Token));

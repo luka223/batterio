@@ -7,6 +7,13 @@ public static class BuiltInDevices
     [
         new BuiltInDeviceDefinition
         {
+            Id = "keychron-q1-he",
+            Name = "Keychron Q1 HE",
+            AdapterId = "keychron-q1-he",
+            PresenceQueries = [KeychronDefinitions.LinkRawHidQuery]
+        },
+        new BuiltInDeviceDefinition
+        {
             Id = "logitech-g-pro-x2-superstrike",
             Name = "Logitech G Pro X2 Superstrike",
             AdapterId = "logitech-g-pro-x2-superstrike",

@@ -45,6 +45,7 @@ public static class BatteryImageHelper
 
     private static string GetFallbackImageSource(string deviceId) => deviceId switch
     {
+        "keychron-q1-he" => "keychron_q1_he.png",
         "logitech-g-pro-x2-superstrike" => "superstrike.png",
         "logitech-g-pro-x2-lightspeed" => "lightspeed.webp",
         "steelseries-arctis-nova-pro-omni" => "arctis_nova_pro_omni_black.png",
