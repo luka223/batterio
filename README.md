@@ -16,7 +16,7 @@ Left-click the tray icon to open the popup, right-click it for the menu (Setting
 
 - **Popup**
 
-  ![Popup](docs/screenshots/popup2.png)
+  ![Popup](docs/screenshots/popup3.png)
 
 - **Disabled (turned off) device**
 
