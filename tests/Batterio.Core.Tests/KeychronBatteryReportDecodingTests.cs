@@ -38,8 +38,76 @@ public sealed class KeychronBatteryReportDecodingTests
     {
         var reading = KeychronBatteryReportDecoding.Decode(Frame(55, charge));
 
-        Assert.Equal(55, reading.Percentage);
         Assert.Equal(expected, reading.ChargeState);
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(2)]
+    public void OffTheChargerTheFirmwarePercentageIsUntouched(byte charge)
+    {
+        Assert.Equal(27, KeychronBatteryReportDecoding.Decode(Frame(27, charge, millivolts: 3555)).Percentage);
+        Assert.Equal(100, KeychronBatteryReportDecoding.Decode(Frame(100, charge, millivolts: 4101)).Percentage);
+    }
+
+    [Theory]
+    [InlineData(3300, 0)]
+    [InlineData(3400, 10)]
+    [InlineData(3555, 27.33)]
+    [InlineData(3742, 52.27)]
+    [InlineData(4100, 100)]
+    [InlineData(4147, 100)]
+    public void TheFirmwareVoltageLineIsReproduced(int millivolts, double expected)
+    {
+        Assert.Equal(expected, KeychronBatteryReportDecoding.PercentageFromMillivolts(millivolts), 2);
+    }
+
+    // Readings logged on 2026-11-04 while charging from 27% (3555 mV on battery).
+    [Theory]
+    [InlineData(3742, 52, 25)]
+    [InlineData(3901, 73, 46)]
+    [InlineData(4003, 87, 60)]
+    [InlineData(4101, 100, 73)]
+    [InlineData(4122, 100, 85)]
+    [InlineData(4141, 100, 96)]
+    [InlineData(4147, 100, 99)]
+    [InlineData(4200, 100, 99)]
+    public void WhileChargingThePercentageComesFromTheCorrectedVoltage(int millivolts, byte firmware, int expected)
+    {
+        var reading = KeychronBatteryReportDecoding.Decode(Frame(firmware, charge: 1, millivolts: (ushort)millivolts));
+
+        Assert.Equal(new BatteryReading(expected, BatteryChargeState.Charging), reading);
+    }
+
+    [Fact]
+    public void TheChargingLiftTapersNearTheTop()
+    {
+        Assert.Equal(200, KeychronBatteryReportDecoding.ChargingLift(3742));
+        Assert.Equal(200, KeychronBatteryReportDecoding.ChargingLift(4100));
+        Assert.Equal(46, KeychronBatteryReportDecoding.ChargingLift(4147));
+        Assert.Equal(46, KeychronBatteryReportDecoding.ChargingLift(4300));
+        Assert.InRange(KeychronBatteryReportDecoding.ChargingLift(4124), 46, 200);
+    }
+
+    [Fact]
+    public void ChargingNeverReachesAHundredBeforeTheFullByte()
+    {
+        for (var millivolts = 3300; millivolts <= 4400; millivolts++)
+        {
+            Assert.InRange(KeychronBatteryReportDecoding.EstimateChargingPercentage((ushort)millivolts), 0, 99);
+        }
+    }
+
+    [Fact]
+    public void TheChargingRiseIsLimitedAndNeverFalls()
+    {
+        var fiveMinutes = TimeSpan.FromMinutes(5);
+
+        Assert.Equal(27.6, KeychronBatteryReportDecoding.LimitChargingRise(37, 25.6, fiveMinutes), 6);
+        Assert.Equal(40, KeychronBatteryReportDecoding.LimitChargingRise(39, 40, fiveMinutes));
+        Assert.Equal(41, KeychronBatteryReportDecoding.LimitChargingRise(41, 40, fiveMinutes));
+        Assert.Equal(40, KeychronBatteryReportDecoding.LimitChargingRise(60, 40, TimeSpan.FromMinutes(-1)));
+        Assert.Equal(99, KeychronBatteryReportDecoding.LimitChargingRise(99, 98.5, TimeSpan.FromHours(1)));
     }
 
     [Fact]

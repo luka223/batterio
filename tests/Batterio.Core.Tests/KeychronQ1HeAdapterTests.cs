@@ -18,13 +18,63 @@ public sealed class KeychronQ1HeAdapterTests
         var provider = new LinkProvider(Collection(Path1));
         provider.Frames.Add(new byte[33]);
         provider.Frames.Add(KeychronBatteryReportDecodingTests.Frame(model: 1));
-        provider.Frames.Add(KeychronBatteryReportDecodingTests.Frame(72, charge: 1));
+        provider.Frames.Add(KeychronBatteryReportDecodingTests.Frame(72));
         await using var adapter = new KeychronQ1HeAdapter(provider);
 
         var reading = await adapter.GetBatteryStatus();
 
-        Assert.Equal(new BatteryReading(72, BatteryChargeState.Charging), reading);
+        Assert.Equal(new BatteryReading(72, BatteryChargeState.NotCharging), reading);
         Assert.Empty(provider.Writes);
+    }
+
+    [Fact]
+    public async Task ChargingRisesNoFasterThanTheChargerAndResetsOffTheCharger()
+    {
+        var provider = new LinkProvider(Collection(Path1));
+        var time = new ManualTimeProvider(new DateTimeOffset(2026, 11, 4, 16, 20, 0, TimeSpan.Zero));
+        await using var adapter = new KeychronQ1HeAdapter(provider, timeProvider: time);
+
+        async Task<BatteryReading> Poll(byte charge, ushort millivolts, byte firmware = 50)
+        {
+            provider.Frames.Clear();
+            provider.Frames.Add(KeychronBatteryReportDecodingTests.Frame(firmware, charge, millivolts: millivolts));
+            return await adapter.GetBatteryStatus();
+        }
+
+        Assert.Equal(new BatteryReading(27, BatteryChargeState.NotCharging), await Poll(0, 3555, 27));
+
+        time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(new BatteryReading(25, BatteryChargeState.Charging), await Poll(1, 3742));
+
+        // The voltage climbs faster than the battery can fill; 5 minutes allow at most 2 more points.
+        time.Advance(TimeSpan.FromMinutes(5));
+        Assert.Equal(27, (await Poll(1, 3827)).Percentage);
+
+        // A dip in voltage never lowers the shown percentage.
+        time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(27, (await Poll(1, 3742)).Percentage);
+
+        // After a long sleep the estimate catches up, but stays at 99% until the full byte.
+        time.Advance(TimeSpan.FromHours(5));
+        Assert.Equal(99, (await Poll(1, 4147)).Percentage);
+        Assert.Equal(new BatteryReading(100, BatteryChargeState.NotCharging), await Poll(2, 4101, 100));
+
+        // Plugging in again starts from the corrected voltage rather than the old estimate.
+        Assert.Equal(87, (await Poll(0, 4003, 87)).Percentage);
+        time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(60, (await Poll(1, 4003)).Percentage);
+    }
+
+    [Fact]
+    public async Task ChargingWhenBatterioStartsUsesTheCorrectedVoltage()
+    {
+        var provider = new LinkProvider(Collection(Path1))
+        {
+            Frames = { KeychronBatteryReportDecodingTests.Frame(87, charge: 1, millivolts: 4003) }
+        };
+        await using var adapter = new KeychronQ1HeAdapter(provider);
+
+        Assert.Equal(new BatteryReading(60, BatteryChargeState.Charging), await adapter.GetBatteryStatus());
     }
 
     [Fact]
@@ -142,6 +192,15 @@ public sealed class KeychronQ1HeAdapterTests
         FeatureReportLength = 0,
         SupportedReportIds = new HashSet<byte> { 0x00 }
     };
+
+    private sealed class ManualTimeProvider(DateTimeOffset initial) : TimeProvider
+    {
+        private DateTimeOffset _now = initial;
+
+        public override DateTimeOffset GetUtcNow() => _now;
+
+        public void Advance(TimeSpan elapsed) => _now += elapsed;
+    }
 
     private sealed class LinkProvider(params HidCollectionInfo[] collections) : IHidCollectionProvider
     {

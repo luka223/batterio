@@ -17,6 +17,10 @@ public sealed class KeychronQ1HeAdapter : IBatteryAdapter
     private readonly IBatterioLog _log;
     private readonly string? _devicePath;
     private readonly TimeSpan _listenTimeout;
+    private readonly TimeProvider _timeProvider;
+    private readonly Lock _chargingGate = new();
+    private double? _lastChargingPercentage;
+    private DateTimeOffset _lastChargingAt;
     private int _disposed;
     private readonly CancellationTokenSource _lifetime = new();
 
@@ -29,12 +33,14 @@ public sealed class KeychronQ1HeAdapter : IBatteryAdapter
         IHidCollectionProvider provider,
         IBatterioLog? log = null,
         string? devicePath = null,
-        TimeSpan? listenTimeout = null)
+        TimeSpan? listenTimeout = null,
+        TimeProvider? timeProvider = null)
     {
         _provider = provider ?? throw new ArgumentNullException(nameof(provider));
         _log = log ?? new NullBatterioLog();
         _devicePath = devicePath;
         _listenTimeout = listenTimeout ?? DefaultListenTimeout;
+        _timeProvider = timeProvider ?? TimeProvider.System;
     }
 
     public async Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default)
@@ -86,12 +92,38 @@ public sealed class KeychronQ1HeAdapter : IBatteryAdapter
         var transaction = new TracingHidTransaction(rawTransaction, _log, collection.DevicePath);
 
         var frame = await ListenForReportAsync(transaction, collection, cancellationToken).ConfigureAwait(false);
-        var reading = KeychronBatteryReportDecoding.Decode(frame, _log);
+        var reading = SmoothCharging(KeychronBatteryReportDecoding.Decode(frame, _log), frame);
         _log.Log(BatterioLogLevel.Information,
-            $"Keychron Q1 HE {reading.Percentage}% ({reading.ChargeState}), " +
+            $"Keychron Q1 HE {reading.Percentage}% ({reading.ChargeState}), firmware {frame[KeychronBatteryReportDecoding.PercentageOffset]}%, " +
             $"{KeychronBatteryReportDecoding.DecodeMillivolts(frame)} mV, charge byte 0x{frame[KeychronBatteryReportDecoding.ChargeOffset]:X2}, " +
             $"connection 0x{frame[KeychronBatteryReportDecoding.ConnectionOffset]:X2}.");
         return reading;
+    }
+
+    /// <summary>
+    /// While charging, holds the estimate steady and rate-limited across queries; the state is dropped once charging stops.
+    /// </summary>
+    private BatteryReading SmoothCharging(BatteryReading reading, byte[] frame)
+    {
+        lock (_chargingGate)
+        {
+            if (reading.ChargeState != BatteryChargeState.Charging)
+            {
+                _lastChargingPercentage = null;
+                return reading;
+            }
+
+            var now = _timeProvider.GetUtcNow();
+            var estimate = KeychronBatteryReportDecoding.EstimateChargingPercentage(KeychronBatteryReportDecoding.DecodeMillivolts(frame));
+            if (_lastChargingPercentage is { } previous)
+            {
+                estimate = KeychronBatteryReportDecoding.LimitChargingRise(estimate, previous, now - _lastChargingAt);
+            }
+
+            _lastChargingPercentage = estimate;
+            _lastChargingAt = now;
+            return new BatteryReading((int)estimate, reading.ChargeState);
+        }
     }
 
     private async Task<byte[]> ListenForReportAsync(
