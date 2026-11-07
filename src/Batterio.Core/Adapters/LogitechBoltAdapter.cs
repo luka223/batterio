@@ -356,6 +356,11 @@ public sealed class LogitechBoltAdapter : IBatteryAdapter
                 $"Bolt short-report collection '{sibling.DevicePath}' could not be opened; empty slots will be detected by timeout: {exception.Message}");
             return ErrorChannel.None;
         }
+        catch
+        {
+            if (transport is not null) await transport.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     private sealed class ErrorChannel(HidCollectionInfo? collection, IHidReportTransport? transport, IHidReportTransaction? transaction)
