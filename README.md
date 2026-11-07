@@ -38,7 +38,7 @@ The strip is shown on the primary taskbar only, and only while the taskbar is at
 
 - **Settings**
 
-  ![Settings](docs/screenshots/settings3.png)
+  ![Settings](docs/screenshots/settings4.png)
 
 ## Technologies
 
