@@ -283,6 +283,104 @@ public sealed class LogitechBoltAdapterTests
             @"\\?\hid#vid_046d&pid_c548&mi_02&col02#7&1edd123a&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}"));
     }
 
+    [Fact]
+    public async Task BluetoothEnumerationFailureStillScansTheBoltReceiver()
+    {
+        var bolt = new FakeBolt()
+            .Add("r1", 2, FakeDevice.MxMaster3s(percentage: 37))
+            .FailEnumeration(query => query.UsagePage == 0xFF43);
+        await using var adapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, bolt);
+
+        Assert.Equal(37, (await adapter.GetBatteryStatus()).Percentage);
+    }
+
+    [Fact]
+    public async Task ReceiverEnumerationFailureStillReadsTheBluetoothEndpoint()
+    {
+        var bolt = new FakeBolt()
+            .Bluetooth("bt-b034", 0xB034, FakeDevice.MxMaster3s(percentage: 20))
+            .FailEnumeration(query => query.UsagePage == 0xFF00);
+        await using var adapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, bolt);
+
+        Assert.Equal(20, (await adapter.GetBatteryStatus()).Percentage);
+    }
+
+    [Fact]
+    public async Task EnumerationFailureIsReportedWhenNoTransportYieldsAReading()
+    {
+        var everywhere = new FakeBolt()
+            .Bluetooth("bt-b034", 0xB034, FakeDevice.MxMaster3s(percentage: 20))
+            .FailEnumeration(_ => true);
+        await using var adapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, everywhere);
+        var exception = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
+        Assert.Equal(BatteryAdapterErrorKind.AccessFailure, exception.Kind);
+
+        // The Bluetooth query fails and the only receiver has no matching device: the failure is kept over "offline".
+        var partial = new FakeBolt()
+            .Add("r1", 1, FakeDevice.Other())
+            .FailEnumeration(query => query.UsagePage == 0xFF43);
+        await using var partialAdapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, partial);
+        exception = await Assert.ThrowsAsync<BatteryAdapterException>(() => partialAdapter.GetBatteryStatus());
+        Assert.Equal(BatteryAdapterErrorKind.AccessFailure, exception.Kind);
+    }
+
+    [Fact]
+    public async Task BluetoothIoFailureFallsBackToTheBoltReceiver()
+    {
+        var bolt = new FakeBolt()
+            .Bluetooth("bt-b034", 0xB034, FakeDevice.MxMaster3s(percentage: 20))
+            .FailWrites("bt-b034")
+            .Add("r1", 1, FakeDevice.MxMaster3s(percentage: 44));
+        await using var adapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, bolt);
+
+        Assert.Equal(44, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal(new[] { "bt-b034", "r1" }, bolt.OpenedPaths);
+    }
+
+    [Fact]
+    public async Task BluetoothIoFailureWithoutAnotherTransportIsReportedAsAccessFailure()
+    {
+        var bolt = new FakeBolt()
+            .Bluetooth("bt-b034", 0xB034, FakeDevice.MxMaster3s(percentage: 20))
+            .FailWrites("bt-b034");
+        await using var adapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, bolt);
+
+        var exception = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
+        Assert.Equal(BatteryAdapterErrorKind.AccessFailure, exception.Kind);
+        Assert.IsType<IOException>(exception.InnerException);
+    }
+
+    [Fact]
+    public async Task ReceiverIoFailureMovesOnToTheNextReceiver()
+    {
+        var bolt = new FakeBolt()
+            .Add("r1", 1, FakeDevice.MxMaster3s(percentage: 10))
+            .FailWrites("r1")
+            .Add("r2", 2, FakeDevice.MxMaster3s(percentage: 71));
+        await using var adapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, bolt);
+
+        Assert.Equal(71, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal(new[] { "r1", "r2" }, bolt.OpenedPaths);
+    }
+
+    [Fact]
+    public async Task ShortCollectionIsDisposedWhenCancelledWhileStartingItsTransaction()
+    {
+        const string longPath = @"\\?\hid#vid_046d&pid_c548&mi_02&col02#7&1edd123a&0&0001#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        const string shortPath = @"\\?\hid#vid_046d&pid_c548&mi_02&col01#7&1edd123a&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}";
+        using var cancellation = new CancellationTokenSource();
+        var bolt = new FakeBolt()
+            .Add(longPath, 1, FakeDevice.MxMaster3s(percentage: 58))
+            .ShortSibling(longPath, shortPath)
+            .CancelOnBeginTransaction(shortPath, cancellation);
+        await using var adapter = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s, bolt);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetBatteryStatus(cancellation.Token));
+
+        Assert.Contains(shortPath, bolt.OpenedPaths);
+        Assert.Contains(shortPath, bolt.DisposedPaths);
+    }
+
     private static byte[] ProbedSlots(FakeBolt bolt) => bolt.Writes
         .Where(write => write.Report[2] == 0 && write.Report[3] == 0x11)
         .Select(write => write.Report[1])
@@ -335,9 +433,35 @@ public sealed class LogitechBoltAdapterTests
         private readonly Dictionary<string, string> _shortSiblingOf = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _silent = new(StringComparer.OrdinalIgnoreCase);
         private readonly ConcurrentDictionary<string, Session> _sessions = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentQueue<string> _disposed = new();
+        private readonly HashSet<string> _failingWrites = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, CancellationTokenSource> _cancelOnBegin = new(StringComparer.OrdinalIgnoreCase);
+        private Func<HidCollectionQuery, bool> _failingEnumeration = _ => false;
 
         public IEnumerable<Write> Writes => _writes.ToArray();
         public string[] OpenedPaths => _opened.ToArray();
+        public string[] DisposedPaths => _disposed.ToArray();
+
+        /// <summary>Enumeration of matching queries fails as when Windows cannot inspect a collection's descriptors.</summary>
+        public FakeBolt FailEnumeration(Func<HidCollectionQuery, bool> predicate)
+        {
+            _failingEnumeration = predicate;
+            return this;
+        }
+
+        /// <summary>Writes to the collection fail with an I/O error, as when the device disappears mid-request.</summary>
+        public FakeBolt FailWrites(string path)
+        {
+            _failingWrites.Add(path);
+            return this;
+        }
+
+        /// <summary>Cancels <paramref name="source"/> while a transaction on the collection is being started.</summary>
+        public FakeBolt CancelOnBeginTransaction(string path, CancellationTokenSource source)
+        {
+            _cancelOnBegin[path] = source;
+            return this;
+        }
 
         public FakeBolt EmptyReceiver(string path)
         {
@@ -422,7 +546,9 @@ public sealed class LogitechBoltAdapterTests
             return slots;
         }
 
-        public IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query) => _collections.Values.ToArray();
+        public IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query) => _failingEnumeration(query)
+            ? throw new BatteryAdapterException(BatteryAdapterErrorKind.AccessFailure, "Could not inspect HID descriptors.")
+            : _collections.Values.ToArray();
 
         public ValueTask<IHidReportTransport> OpenAsync(HidCollectionInfo collection, CancellationToken cancellationToken = default)
         {
@@ -438,11 +564,24 @@ public sealed class LogitechBoltAdapterTests
             private readonly SemaphoreSlim _available = new(0);
             public HidCollectionInfo Collection => collection;
 
-            public ValueTask<IHidReportTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default) =>
-                ValueTask.FromResult<IHidReportTransaction>(this);
+            public ValueTask<IHidReportTransaction> BeginTransactionAsync(CancellationToken cancellationToken = default)
+            {
+                if (owner._cancelOnBegin.TryGetValue(collection.DevicePath, out var source))
+                {
+                    source.Cancel();
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+
+                return ValueTask.FromResult<IHidReportTransaction>(this);
+            }
 
             public ValueTask WriteAsync(ReadOnlyMemory<byte> report, CancellationToken cancellationToken = default)
             {
+                if (owner._failingWrites.Contains(collection.DevicePath))
+                {
+                    return ValueTask.FromException(new IOException("The device is not connected."));
+                }
+
                 var bytes = report.ToArray();
                 owner._writes.Enqueue(new Write(collection.DevicePath, bytes));
                 var reply = owner.Reply(collection.DevicePath, bytes);
@@ -481,7 +620,11 @@ public sealed class LogitechBoltAdapterTests
                 return reply.Length;
             }
 
-            public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+            public ValueTask DisposeAsync()
+            {
+                owner._disposed.Enqueue(collection.DevicePath);
+                return ValueTask.CompletedTask;
+            }
         }
 
         private byte[]? Reply(string path, byte[] request)

@@ -187,6 +187,14 @@ public sealed class LogitechBoltAdapter : IBatteryAdapter
                 endpointFailure ??= exception;
                 _log.Log(BatterioLogLevel.Warning, $"Bolt receiver '{receiver.DevicePath}' could not be used: {exception.Message}");
             }
+            catch (System.IO.IOException exception)
+            {
+                // The receiver was unplugged or failed mid-scan; another receiver may still hold the device.
+                var failure = new BatteryAdapterException(BatteryAdapterErrorKind.AccessFailure,
+                    $"Could not communicate with Bolt receiver '{receiver.DevicePath}'.", exception);
+                endpointFailure ??= failure;
+                _log.Log(BatterioLogLevel.Warning, $"Bolt receiver '{receiver.DevicePath}' could not be used: {exception.Message}");
+            }
         }
 
         if (endpointFailure is not null)
