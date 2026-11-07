@@ -97,6 +97,59 @@ public sealed class TaskbarStripRendererTests
         Assert.True(CountAmberPixels(charging) > 10, "The lightning bolt should be drawn in amber.");
     }
 
+    [Theory]
+    [InlineData(100, false)]
+    [InlineData(41, false)]
+    [InlineData(40, true)]
+    [InlineData(20, true)]
+    public void NumberIsYellowFromTwentyToFortyPercentAndNormalAbove(int percentage, bool yellow)
+    {
+        var normal = TaskbarStripRenderer.DarkTaskbarText;
+
+        var color = TaskbarStripRenderer.GetNumberColor(Item("a", percentage), normal);
+
+        Assert.Equal(yellow ? TaskbarStripRenderer.MediumColor : normal, color);
+    }
+
+    [Theory]
+    [InlineData(19)]
+    [InlineData(5)]
+    [InlineData(0)]
+    public void NumberIsRedBelowTwentyPercent(int percentage)
+    {
+        var color = TaskbarStripRenderer.GetNumberColor(Item("a", percentage), TaskbarStripRenderer.DarkTaskbarText);
+
+        Assert.Equal(TaskbarStripRenderer.LowColor, color);
+    }
+
+    [Fact]
+    public void ChargingAndOfflineItemsKeepTheNormalNumberColourLikeThePopup()
+    {
+        var normal = TaskbarStripRenderer.LightTaskbarText;
+
+        Assert.Equal(normal, TaskbarStripRenderer.GetNumberColor(Item("a", 10, charging: true), normal));
+        Assert.Equal(normal, TaskbarStripRenderer.GetNumberColor(Item("a", 30, charging: true), normal));
+        Assert.Equal(normal, TaskbarStripRenderer.GetNumberColor(
+            new TaskbarStripItem("a", DeviceKind.Mouse, null, IsCharging: false), normal));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void LowAndMediumNumbersAreActuallyDrawnInColour(bool lightTaskbar)
+    {
+        using var medium = TaskbarStripRenderer.Render([Item("a", 30)], 1, TaskbarHeight, lightTaskbar)!;
+        using var low = TaskbarStripRenderer.Render([Item("a", 10)], 1, TaskbarHeight, lightTaskbar)!;
+        using var high = TaskbarStripRenderer.Render([Item("a", 64)], 1, TaskbarHeight, lightTaskbar)!;
+
+        Assert.True(CountAmberPixels(medium) > 10, "A 30% number should be yellow.");
+        Assert.Equal(0, CountRedPixels(medium));
+        Assert.True(CountRedPixels(low) > 10, "A 10% number should be red.");
+        Assert.Equal(0, CountAmberPixels(low));
+        Assert.Equal(0, CountAmberPixels(high));
+        Assert.Equal(0, CountRedPixels(high));
+    }
+
     [Fact]
     public void OfflineItemsShowDashesInsteadOfAPercentageAndNeverDrawABolt()
     {
@@ -174,6 +227,24 @@ public sealed class TaskbarStripRendererTests
 
         Assert.True(count > 0, "No sufficiently opaque pixels were drawn.");
         return total / count;
+    }
+
+    private static int CountRedPixels(Bitmap bitmap)
+    {
+        var count = 0;
+        for (var y = 0; y < bitmap.Height; y++)
+        {
+            for (var x = 0; x < bitmap.Width; x++)
+            {
+                var pixel = bitmap.GetPixel(x, y);
+                if (pixel.A >= 100 && pixel.R > 200 && pixel.G < 110 && pixel.B < 110)
+                {
+                    count++;
+                }
+            }
+        }
+
+        return count;
     }
 
     private static int CountAmberPixels(Bitmap bitmap)

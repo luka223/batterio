@@ -14,7 +14,7 @@ Left-click the tray icon to open the popup, right-click it for the menu (Setting
 
 ### Taskbar strip
 
-Devices can also show their battery level on the taskbar, next to the system tray: a mouse, keyboard or headphones glyph, the percentage, and an amber lightning bolt while charging. It is off by default. In **Settings**, tick the **Taskbar** box of a device (it needs the **Popup** box ticked as well). A device that is offline or disconnected stays on the strip, dimmed, with `--` instead of a percentage. For the SteelSeries Arctis Nova Pro Omni only the main battery is shown. Clicking the strip works like clicking the tray icon: left-click toggles the popup, right-click opens the menu.
+Devices can also show their battery level on the taskbar, next to the system tray: a mouse, keyboard or headphones glyph, the percentage, and an amber lightning bolt while charging. It is off by default. In **Settings**, tick the **Taskbar** box of a device (it needs the **Popup** box ticked as well). The number turns yellow from 20% to 40% and red below 20%, as in the popup (it stays in the normal colour while charging, like the popup's green battery). A device that is offline or disconnected stays on the strip, dimmed, with `--` instead of a percentage. For the SteelSeries Arctis Nova Pro Omni only the main battery is shown. Clicking the strip works like clicking the tray icon: left-click toggles the popup, right-click opens the menu.
 
 The strip is shown on the primary taskbar only, and only while the taskbar is at the bottom of the screen. On a crowded, left-aligned taskbar it can overlap pinned apps.
 

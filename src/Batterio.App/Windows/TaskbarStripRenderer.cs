@@ -22,6 +22,8 @@ internal static class TaskbarStripRenderer
     internal const string LightningBoltGlyph = "";
 
     internal static readonly Color BoltColor = Color.FromArgb(0xF5, 0xB4, 0x00);
+    internal static readonly Color LowColor = ColorTranslator.FromHtml(BatteryPresentationRules.LowColorHex);
+    internal static readonly Color MediumColor = ColorTranslator.FromHtml(BatteryPresentationRules.MediumColorHex);
     internal static readonly Color DarkTaskbarText = Color.White;
     internal static readonly Color LightTaskbarText = Color.FromArgb(0x1A, 0x1A, 0x1A);
 
@@ -126,7 +128,9 @@ internal static class TaskbarStripRenderer
 
                 var text = FormatPercentage(item.Percentage);
                 var textWidth = MeasureText(measureGraphics, text, fonts.Text);
-                graphics.DrawString(text, fonts.Text, brush,
+                var levelColor = GetNumberColor(item, textColor);
+                using var numberBrush = item.IsOffline || levelColor == textColor ? null : new SolidBrush(levelColor);
+                graphics.DrawString(text, fonts.Text, numberBrush ?? brush,
                     new RectangleF(x, 0, textWidth + 4, height), format);
                 x += textWidth;
 
@@ -154,6 +158,29 @@ internal static class TaskbarStripRenderer
     internal static string FormatPercentage(int? percentage) => percentage is { } value ? $"{value}%" : OfflineText;
 
     private static bool ShowsBolt(TaskbarStripItem item) => item.IsCharging && !item.IsOffline;
+
+    /// <summary>
+    /// Colour of the percentage number, following the tray popup: yellow from 20% to 40%, red below 20%.
+    /// Above 40%, while charging (the popup turns green then) and when offline, the normal text colour
+    /// is used. The thresholds and colours come from <see cref="BatteryPresentationRules"/>.
+    /// </summary>
+    internal static Color GetNumberColor(TaskbarStripItem item, Color normalTextColor)
+    {
+        if (item.IsOffline || item.IsCharging)
+        {
+            return normalTextColor;
+        }
+
+        var hex = BatteryPresentationRules.GetPercentageColorHex(item.Percentage);
+        if (string.Equals(hex, BatteryPresentationRules.LowColorHex, StringComparison.OrdinalIgnoreCase))
+        {
+            return LowColor;
+        }
+
+        return string.Equals(hex, BatteryPresentationRules.MediumColorHex, StringComparison.OrdinalIgnoreCase)
+            ? MediumColor
+            : normalTextColor;
+    }
 
     internal static string GlyphFor(DeviceKind kind) => kind switch
     {
