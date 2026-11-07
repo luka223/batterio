@@ -16,5 +16,8 @@ static class StartupConstants
     public const string LauncherPathEnvironmentVariable = "BATTERIO_LAUNCHER_PATH";
     public const string SingleInstanceKey = "Batterio.SingleInstance";
     public const string ToastActivationArgument = "-ToastActivated";
+    /// <summary>Followed by a process id: the launcher waits for that process to exit before starting.</summary>
+    public const string UpdateWaitArgument = "--batterio-update-wait";
+    public const string UpdateOldSuffix = ".old";
     public const string TrayWindowClass = "Shell_TrayWnd";
 }

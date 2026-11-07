@@ -1,6 +1,7 @@
 using Batterio.Core;
 using Batterio.Core.Abstractions;
 using Batterio.Core.Notifications;
+using Batterio.Core.Updates;
 using Batterio.App.Windows;
 using Microsoft.Extensions.Logging;
 
@@ -18,12 +19,15 @@ public sealed class BatteryApplication : IAsyncDisposable
     private readonly IBatterioLog _log;
     private readonly ILogger<BatteryApplication> _logger;
     private readonly RuntimeStartupSequence _startup;
+    private readonly UpdateCoordinator _updates;
+    private readonly WindowsUpdateNotifier _updateNotifier;
     private IProcessTerminator _processTerminator = new EnvironmentProcessTerminator();
     private BoundedCleanupProcessExit _boundedExit;
     private bool _isExiting;
 
     public const int StartupFailureExitCode = 1;
     private static readonly TimeSpan StartupFailureCleanupTimeout = TimeSpan.FromSeconds(3);
+    private static readonly TimeSpan StartupUpdateCheckDelay = TimeSpan.FromSeconds(10);
 
     public BatteryApplication(
         PollingCoordinator polling,
@@ -33,6 +37,8 @@ public sealed class BatteryApplication : IAsyncDisposable
         ITaskbarStripService strip,
         WindowCoordinator windows,
         IStartupRegistrationService startupRegistration,
+        UpdateCoordinator updates,
+        WindowsUpdateNotifier updateNotifier,
         IBatterioLog log,
         ILogger<BatteryApplication> logger)
     {
@@ -43,6 +49,8 @@ public sealed class BatteryApplication : IAsyncDisposable
         _strip = strip;
         _windows = windows;
         _startupRegistration = startupRegistration;
+        _updates = updates;
+        _updateNotifier = updateNotifier;
         _log = log;
         _logger = logger;
         _boundedExit = new BoundedCleanupProcessExit(_processTerminator);
@@ -67,10 +75,34 @@ public sealed class BatteryApplication : IAsyncDisposable
 
     public bool IsExiting => _isExiting;
 
-    public Task StartAsync()
+    public async Task StartAsync()
     {
         RefreshStartupRegistration();
-        return _startup.StartAsync();
+        await _startup.StartAsync().ConfigureAwait(false);
+        _ = CheckForUpdatesAfterStartupAsync();
+    }
+
+    private async Task CheckForUpdatesAfterStartupAsync()
+    {
+        try
+        {
+            // Let devices and the tray settle first; the check is not urgent.
+            await Task.Delay(StartupUpdateCheckDelay).ConfigureAwait(false);
+            if (_isExiting)
+            {
+                return;
+            }
+
+            var snapshot = await _updates.CheckAsync().ConfigureAwait(false);
+            if (!_isExiting && snapshot.Status == UpdateStatus.Available && snapshot.Release is { } release)
+            {
+                _updateNotifier.ShowUpdateAvailable(release.Version);
+            }
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Warning, "The startup update check failed.", exception);
+        }
     }
 
     private void RefreshStartupRegistration()

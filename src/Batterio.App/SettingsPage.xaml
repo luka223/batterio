@@ -1,12 +1,47 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
              xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:Batterio.App"
              x:Class="Batterio.App.SettingsPage"
              Title="Batterio Settings">
     <Grid RowDefinitions="*,Auto">
         <ScrollView>
             <VerticalStackLayout Padding="28" Spacing="22">
                 <Label Text="General" FontSize="22" FontAttributes="Bold" />
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
+                    <VerticalStackLayout Spacing="3" VerticalOptions="Center">
+                        <Label Text="Updates" FontSize="15" />
+                        <HorizontalStackLayout Spacing="6" IsVisible="{Binding IsUpToDate}">
+                            <Label Text="&#x2713;" TextColor="#16A34A" FontSize="13" FontAttributes="Bold"
+                                   VerticalOptions="Center" />
+                            <Label Text="Batterio is up to date" FontSize="12" Opacity="0.8" VerticalOptions="Center" />
+                        </HorizontalStackLayout>
+                        <HorizontalStackLayout Spacing="8" IsVisible="{Binding HasUpdateStatusText}">
+                            <ActivityIndicator IsRunning="{Binding IsCheckingForUpdates}"
+                                               IsVisible="{Binding IsCheckingForUpdates}"
+                                               HeightRequest="14" WidthRequest="14" VerticalOptions="Center" />
+                            <Label Text="{Binding UpdateStatusText}" FontSize="12" Opacity="0.65"
+                                   LineBreakMode="WordWrap" VerticalOptions="Center" />
+                        </HorizontalStackLayout>
+                        <ProgressBar Progress="{Binding UpdateDownloadProgress}"
+                                     IsVisible="{Binding IsDownloadingUpdate}"
+                                     Margin="0,4,0,0" />
+                        <Label Text="{Binding UpdateError}" IsVisible="{Binding HasUpdateError}"
+                               TextColor="#DC2626" FontSize="12" LineBreakMode="WordWrap" />
+                    </VerticalStackLayout>
+                    <VerticalStackLayout Grid.Column="1" Spacing="8" VerticalOptions="Center">
+                        <local:AccentButton Text="Check for updates" Clicked="OnCheckForUpdatesClicked"
+                                            IsEnabled="{Binding CanCheckForUpdates}" />
+                        <local:AccentButton Text="Download" Clicked="OnDownloadUpdateClicked"
+                                            IsVisible="{Binding ShowDownloadButton}"
+                                            IsEnabled="{Binding CanDownloadUpdate}" />
+                        <local:AccentButton Text="Open releases page" Clicked="OnOpenReleasesPageClicked"
+                                            IsVisible="{Binding ShowReleasesPageButton}" />
+                        <local:AccentButton Text="{Binding InstallButtonText}" Clicked="OnInstallUpdateClicked"
+                                            IsVisible="{Binding ShowInstallButton}"
+                                            IsEnabled="{Binding CanInstallUpdate}" />
+                    </VerticalStackLayout>
+                </Grid>
                 <Grid ColumnDefinitions="*,Auto" ColumnSpacing="18">
                     <VerticalStackLayout Spacing="3">
                         <Label Text="Start automatically when Windows starts."

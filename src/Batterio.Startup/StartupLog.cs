@@ -30,6 +30,9 @@ public sealed class StartupLog : IStartupLog
 
     public void RuntimeMissing() => Append("event=runtime-missing");
 
+    public void UpdateHandoff(int processId, bool previousExited) =>
+        Append($"event=update-handoff previousPid={processId} previousExited={(previousExited ? "true" : "false")}");
+
     public void UnexpectedFailure(string failureType) =>
         Append($"event=launcher-failure failure={Safe(failureType) ?? "unknown"}");
 

@@ -141,6 +141,31 @@ public sealed class WindowsNotificationTests
         Assert.Equal(3, calls);
     }
 
+    [Fact]
+    public void UpdateNotificationOpensSettingsAndOtherToastsOpenThePopup()
+    {
+        var activation = new WindowsToastActivation();
+        var platform = new FakePlatform();
+        using var registration = new WindowsToastRegistrationService(platform, activation, () => @"C:\Batterio.exe", _ => true);
+        var notifier = new WindowsUpdateNotifier(registration, platform, new NullBatterioLog());
+        notifier.ShowUpdateAvailable(new Version(1, 2, 0, 0));
+
+        var toast = XElement.Parse(Assert.Single(platform.Toasts));
+        Assert.Equal("foreground", (string?)toast.Attribute("activationType"));
+        Assert.Equal(WindowsToastRegistrationService.UpdateAvailableLaunchArgument, (string?)toast.Attribute("launch"));
+        Assert.Equal("Batterio 1.2.0 is available", toast.Descendants("text").First().Value);
+
+        var popups = 0;
+        var settings = 0;
+        // A click before the app is ready is held until it is.
+        platform.Activated!(WindowsToastRegistrationService.AppUserModelId, WindowsToastRegistrationService.UpdateAvailableLaunchArgument);
+        activation.SetReady(() => popups++, () => settings++);
+        Assert.Equal((0, 1), (popups, settings));
+        platform.Activated!(WindowsToastRegistrationService.AppUserModelId, WindowsToastRegistrationService.UpdateAvailableLaunchArgument);
+        platform.Activated!(WindowsToastRegistrationService.AppUserModelId, "low-battery");
+        Assert.Equal((1, 2), (popups, settings));
+    }
+
     [Theory]
     [InlineData(false, "low-battery")]
     [InlineData(true, "fully-charged")]

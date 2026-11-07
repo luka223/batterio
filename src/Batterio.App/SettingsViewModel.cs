@@ -3,6 +3,8 @@ using System.ComponentModel;
 using System.Runtime.CompilerServices;
 using Batterio.Core;
 using Batterio.Core.Abstractions;
+using Batterio.Core.Updates;
+using Batterio.App.Windows;
 
 namespace Batterio.App;
 
@@ -10,6 +12,8 @@ public sealed class SettingsViewModel : INotifyPropertyChanged, IDisposable
 {
     private readonly DeviceSelectionCoordinator _selection;
     private readonly IStartupRegistrationService _startup;
+    private readonly UpdateCoordinator _updates;
+    private UpdateSnapshot _update;
     private bool _isLoading = true;
     private bool _isStartupKnown;
     private bool _isStartupRegistered;
@@ -20,12 +24,16 @@ public sealed class SettingsViewModel : INotifyPropertyChanged, IDisposable
 
     public SettingsViewModel(
         DeviceSelectionCoordinator selection,
-        IStartupRegistrationService startup)
+        IStartupRegistrationService startup,
+        UpdateCoordinator updates)
     {
         _selection = selection ?? throw new ArgumentNullException(nameof(selection));
         _startup = startup ?? throw new ArgumentNullException(nameof(startup));
+        _updates = updates ?? throw new ArgumentNullException(nameof(updates));
         Devices = new ObservableCollection<DeviceSelectionItemViewModel>();
         _selection.SnapshotChanged += OnSelectionSnapshotChanged;
+        _update = _updates.Current;
+        _updates.SnapshotChanged += OnUpdateSnapshotChanged;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -104,6 +112,49 @@ public sealed class SettingsViewModel : INotifyPropertyChanged, IDisposable
     }
 
     public bool HasError => !string.IsNullOrWhiteSpace(Error);
+
+    public bool CanCheckForUpdates => _update.Status is UpdateStatus.Idle or UpdateStatus.UpToDate or UpdateStatus.Available;
+
+    public bool IsCheckingForUpdates => _update.Status == UpdateStatus.Checking;
+
+    public bool IsUpToDate => _update.Status == UpdateStatus.UpToDate;
+
+    public bool IsUpdateAvailable => _update.Status is UpdateStatus.Available or UpdateStatus.Downloading;
+
+    /// <summary>The Download button stays visible, disabled, while the download runs.</summary>
+    public bool ShowDownloadButton => _update.CanInstall && IsUpdateAvailable;
+
+    public bool CanDownloadUpdate => _update.CanInstall && _update.Status == UpdateStatus.Available;
+
+    /// <summary>The folder build and debug runs cannot replace one file; they link to the releases page.</summary>
+    public bool ShowReleasesPageButton => !_update.CanInstall && _update.Status == UpdateStatus.Available;
+
+    public bool IsDownloadingUpdate => _update.Status == UpdateStatus.Downloading;
+
+    public double UpdateDownloadProgress => _update.Progress;
+
+    public bool ShowInstallButton => _update.Status is UpdateStatus.ReadyToInstall or UpdateStatus.Installing;
+
+    public bool CanInstallUpdate => _update.Status == UpdateStatus.ReadyToInstall;
+
+    public string InstallButtonText => _update.Status == UpdateStatus.Installing ? "Updating..." : "Update now";
+
+    public string UpdateStatusText => _update.Status switch
+    {
+        UpdateStatus.Checking => "Checking for updates...",
+        UpdateStatus.UpToDate => $"Batterio is up to date ({FormatVersion(_update.CurrentVersion)}).",
+        UpdateStatus.Available => $"Batterio {FormatVersion(_update.Release?.Version)} is available. You have {FormatVersion(_update.CurrentVersion)}.",
+        UpdateStatus.Downloading => $"Downloading Batterio {FormatVersion(_update.Release?.Version)}... {(int)Math.Floor(_update.Progress * 100)}%",
+        UpdateStatus.ReadyToInstall => $"Batterio {FormatVersion(_update.Release?.Version)} is ready. Batterio will restart to finish the update.",
+        UpdateStatus.Installing => "Restarting into the new version...",
+        _ => "Check GitHub for a newer version of Batterio."
+    };
+
+    public bool HasUpdateStatusText => _update.Status != UpdateStatus.UpToDate;
+
+    public string? UpdateError => _update.Error;
+
+    public bool HasUpdateError => !string.IsNullOrWhiteSpace(_update.Error);
 
     internal bool IsApplyingSnapshot { get; private set; }
 
@@ -235,8 +286,60 @@ public sealed class SettingsViewModel : INotifyPropertyChanged, IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
         {
             _selection.SnapshotChanged -= OnSelectionSnapshotChanged;
+            _updates.SnapshotChanged -= OnUpdateSnapshotChanged;
         }
     }
+
+    public Task CheckForUpdatesAsync() => RunUpdateActionAsync(() => _updates.CheckAsync());
+
+    public Task DownloadUpdateAsync() => RunUpdateActionAsync(() => _updates.DownloadAsync());
+
+    public Task InstallUpdateAsync() => RunUpdateActionAsync(_updates.InstallAsync);
+
+    public static Task OpenReleasesPageAsync() =>
+        Launcher.Default.OpenAsync(new Uri(AppUpdateEnvironment.ReleasesPage));
+
+    private static async Task RunUpdateActionAsync(Func<Task> action)
+    {
+        try
+        {
+            await action().ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void OnUpdateSnapshotChanged(object? sender, UpdateSnapshot snapshot)
+    {
+        MainThread.BeginInvokeOnMainThread(() => ApplyUpdateSnapshot(snapshot));
+    }
+
+    private void ApplyUpdateSnapshot(UpdateSnapshot snapshot)
+    {
+        if (Volatile.Read(ref _disposed) != 0)
+        {
+            return;
+        }
+
+        // Events are marshalled one by one, so a late progress event must not undo a newer state.
+        _update = _updates.Current;
+        foreach (var name in UpdatePropertyNames)
+        {
+            OnPropertyChanged(name);
+        }
+    }
+
+    private static readonly string[] UpdatePropertyNames =
+    [
+        nameof(CanCheckForUpdates), nameof(IsCheckingForUpdates), nameof(IsUpToDate), nameof(IsUpdateAvailable),
+        nameof(ShowDownloadButton), nameof(CanDownloadUpdate), nameof(ShowReleasesPageButton),
+        nameof(IsDownloadingUpdate), nameof(UpdateDownloadProgress), nameof(ShowInstallButton),
+        nameof(CanInstallUpdate), nameof(InstallButtonText), nameof(UpdateStatusText), nameof(HasUpdateStatusText),
+        nameof(UpdateError), nameof(HasUpdateError)
+    ];
+
+    private static string FormatVersion(Version? version) => version?.ToString(3) ?? "unknown";
 
     private async Task InitializeDiscoveryAsync(CancellationToken cancellationToken)
     {

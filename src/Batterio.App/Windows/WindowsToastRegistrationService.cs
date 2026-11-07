@@ -8,6 +8,8 @@ public sealed class WindowsToastRegistrationService : IDisposable
     public const string AppUserModelId = "com.batterio.tray";
     public static readonly Guid ActivatorId = new("B68D18D7-6B67-4C24-993C-B597D789E895");
     public const string ActivationArgument = "-ToastActivated";
+    /// <summary>The toast launch argument of the update notification; clicking it opens Settings.</summary>
+    public const string UpdateAvailableLaunchArgument = "update-available";
     private readonly IWindowsToastPlatform _platform;
     private readonly WindowsToastActivation _activation;
     private readonly Func<string?>? _processPath;
@@ -41,9 +43,12 @@ public sealed class WindowsToastRegistrationService : IDisposable
                 Arguments = ActivationArgument
             });
             _platform.WriteComServer(ActivatorId, path, $"\"{path}\" {ActivationArgument}");
-            _activator = _platform.RegisterActivator(ActivatorId, (appId, _) =>
+            _activator = _platform.RegisterActivator(ActivatorId, (appId, arguments) =>
             {
-                if (string.Equals(appId, AppUserModelId, StringComparison.Ordinal))
+                if (!string.Equals(appId, AppUserModelId, StringComparison.Ordinal)) return;
+                if (string.Equals(arguments, UpdateAvailableLaunchArgument, StringComparison.Ordinal))
+                    _activation.RequestSettings();
+                else
                     _activation.RequestPopup();
             });
         }

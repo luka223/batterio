@@ -12,6 +12,19 @@ internal static class Program
         {
             var installationDirectory = Path.GetFullPath(AppContext.BaseDirectory);
             var launcherPath = Environment.ProcessPath;
+
+            // After an in-place update, let the previous copy exit before this one starts, so the
+            // single-instance check does not hand activation back to it.
+            args = UpdateHandoff.TakeWaitProcessId(args, out var previousProcessId);
+            if (previousProcessId is { } previous)
+            {
+                log.UpdateHandoff(previous, UpdateHandoff.WaitForExit(previous, UpdateHandoff.DefaultWaitTimeout));
+            }
+
+            if (launcherPath is not null)
+            {
+                UpdateHandoff.RemovePreviousExecutable(launcherPath);
+            }
             var payloadDirectory = launcherPath is null
                 ? null
                 : EmbeddedPayload.TryPrepare(launcherPath, EmbeddedPayload.DefaultCacheRoot, StartupConstants.RuntimeExecutableName);

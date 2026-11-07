@@ -102,15 +102,19 @@ Both scripts produce a self-contained `win-x64` build; no .NET or Windows App Ru
 
 New versions are published as a single `Batterio.exe` on the GitHub releases page. The installed version is shown at the bottom of the Settings page.
 
-1. Close Batterio: right-click the tray icon and choose **Close**.
-2. Delete the old `Batterio.exe`.
-3. Download the new `Batterio.exe` and run it.
+Batterio checks for a newer release shortly after it starts and shows a notification when one is available; clicking it opens Settings. The **Updates** section of Settings can also check on demand:
+
+1. **Check for updates** asks GitHub for the latest release. If there is none newer, it shows **✓ Batterio is up to date**.
+2. **Download** fetches the new `Batterio.exe` next to the current one (as `Batterio.exe.download`) with a progress bar, and verifies it against the release's SHA-256 checksum.
+3. **Update now** replaces `Batterio.exe` in its folder and restarts Batterio into the new version. The previous file is kept as `Batterio.exe.old` until the new version has started, and is restored if the new one cannot be launched.
+
+The folder that holds `Batterio.exe` must be writable by you; otherwise Settings explains why the update failed and you can update by hand: close Batterio (right-click the tray icon and choose **Close**), replace `Batterio.exe` with the one from the releases page, and run it. The folder build cannot update itself and only links to the releases page.
 
 Settings and device selections are kept, since they live in `%LocalAppData%\Batterio`, not next to the exe. If **Start automatically when Windows starts** was on, it is pointed at the new exe on its first start, even if it is in a different folder or has a different name. The unpacked copy of the previous version in `%LocalAppData%\Batterio\Runtime` is removed automatically.
 
 For the folder build, close Batterio and replace the whole folder with the new one; do not mix files from different versions.
 
-To release a new version, bump `<Version>` in `Directory.Build.props` and run the single-file publish script.
+To release a new version, bump `<Version>` in `Directory.Build.props`, run the single-file publish script, and attach the resulting `Batterio.exe` to a GitHub release whose tag is the version (for example `1.2.0`). Running copies only see published releases; drafts and prereleases are ignored.
 
 ## Data and diagnostics
 

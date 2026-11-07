@@ -21,6 +21,35 @@ public partial class SettingsPage : ContentPage
         return metadataStart >= 0 ? version[..metadataStart] : version;
     }
 
+    private void OnCheckForUpdatesClicked(object? sender, EventArgs e)
+    {
+        if (ViewModel is { CanCheckForUpdates: true } viewModel)
+        {
+            _ = viewModel.CheckForUpdatesAsync();
+        }
+    }
+
+    private void OnDownloadUpdateClicked(object? sender, EventArgs e)
+    {
+        if (ViewModel is { CanDownloadUpdate: true } viewModel)
+        {
+            _ = viewModel.DownloadUpdateAsync();
+        }
+    }
+
+    private void OnInstallUpdateClicked(object? sender, EventArgs e)
+    {
+        if (ViewModel is { CanInstallUpdate: true } viewModel)
+        {
+            _ = viewModel.InstallUpdateAsync();
+        }
+    }
+
+    private void OnOpenReleasesPageClicked(object? sender, EventArgs e)
+    {
+        _ = SettingsViewModel.OpenReleasesPageAsync();
+    }
+
     private void OnStartupCheckedChanged(object? sender, CheckedChangedEventArgs e)
     {
         if (ViewModel is not null && !ViewModel.IsStartupPending && !ViewModel.IsApplyingStartup)

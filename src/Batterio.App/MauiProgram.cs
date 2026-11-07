@@ -1,6 +1,7 @@
 using Batterio.Core;
 using Batterio.Core.Abstractions;
 using Batterio.Core.Notifications;
+using Batterio.Core.Updates;
 using Batterio.App.Windows;
 using Microsoft.Extensions.Logging;
 
@@ -14,6 +15,7 @@ public static class MauiProgram
         builder
             .UseMauiApp<App>()
             .ConfigureFonts(fonts => { });
+        AccentButton.Register();
 
         builder.Services.AddSingleton<IBatterioLog>(_ =>
             new RotatingFileLog(Path.Combine(
@@ -50,6 +52,22 @@ public static class MauiProgram
             services.GetRequiredService<IBatterioLog>()));
         builder.Services.AddSingleton<IStartupRegistry, WindowsStartupRegistry>();
         builder.Services.AddSingleton<IStartupRegistrationService, WindowsStartupRegistrationService>();
+        builder.Services.AddSingleton(_ => AppUpdateEnvironment.CreateHttpClient());
+        builder.Services.AddSingleton<IUpdateReleaseSource>(services => new GitHubUpdateReleaseSource(
+            services.GetRequiredService<HttpClient>(),
+            GitHubUpdateReleaseSource.DefaultRepository,
+            GitHubUpdateReleaseSource.DefaultAssetName));
+        builder.Services.AddSingleton(services => new UpdateDownloader(services.GetRequiredService<HttpClient>()));
+        builder.Services.AddSingleton<IUpdateRestarter>(services =>
+            new WindowsUpdateRestarter(() => services.GetRequiredService<BatteryApplication>().ExitAsync()));
+        builder.Services.AddSingleton(services => new UpdateCoordinator(
+            services.GetRequiredService<IUpdateReleaseSource>(),
+            services.GetRequiredService<UpdateDownloader>(),
+            services.GetRequiredService<IUpdateRestarter>(),
+            AppUpdateEnvironment.CurrentVersion,
+            AppUpdateEnvironment.UpdatableExecutablePath,
+            services.GetRequiredService<IBatterioLog>()));
+        builder.Services.AddSingleton<WindowsUpdateNotifier>();
         builder.Services.AddTransient<SettingsViewModel>();
         builder.Services.AddSingleton<WindowCoordinator>();
         builder.Services.AddSingleton<IWindowCoordinator>(services => services.GetRequiredService<WindowCoordinator>());

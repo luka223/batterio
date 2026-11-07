@@ -8,6 +8,7 @@
     <Compile Include="../../src/Batterio.App/Windows/IWindowsToastPlatform.cs" Link="Windows/IWindowsToastPlatform.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsToastRegistrationService.cs" Link="Windows/WindowsToastRegistrationService.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsToastActivation.cs" Link="Windows/WindowsToastActivation.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/WindowsUpdateServices.cs" Link="Windows/WindowsUpdateServices.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsBatteryNotificationService.cs" Link="Windows/WindowsBatteryNotificationService.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsHidCollectionProvider.cs" Link="Windows/WindowsHidCollectionProvider.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsStartupRegistrationService.cs" Link="Windows/WindowsStartupRegistrationService.cs" />

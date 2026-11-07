@@ -46,9 +46,14 @@ public partial class App : Application
 
     private void SetActivationReady()
     {
-        WindowsToastActivation.Current.SetReady(() => MainThread.BeginInvokeOnMainThread(() =>
-        {
-            if (!_application.IsExiting) _windows.ShowPopup();
-        }));
+        WindowsToastActivation.Current.SetReady(
+            () => MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (!_application.IsExiting) _windows.ShowPopup();
+            }),
+            () => MainThread.BeginInvokeOnMainThread(() =>
+            {
+                if (!_application.IsExiting) _ = _windows.ShowSettingsAsync();
+            }));
     }
 }
