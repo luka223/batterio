@@ -74,6 +74,27 @@ public sealed class BuiltInDeviceTests
     }
 
     [Fact]
+    public void EveryCatalogEntryHasTheExpectedDeviceKind()
+    {
+        var expected = new Dictionary<string, DeviceKind>
+        {
+            ["keychron-q1-he"] = DeviceKind.Keyboard,
+            ["logitech-mx-keys-mechanical"] = DeviceKind.Keyboard,
+            ["logitech-g-pro-x2-superstrike"] = DeviceKind.Mouse,
+            ["logitech-g-pro-x2-lightspeed"] = DeviceKind.Mouse,
+            ["logitech-mx-master-3s"] = DeviceKind.Mouse,
+            ["steelseries-arctis-nova-pro-omni"] = DeviceKind.Headset
+        };
+
+        Assert.Equal(expected.Count, BuiltInDevices.Catalog.Count);
+        foreach (var device in BuiltInDevices.Catalog)
+        {
+            Assert.Equal(expected[device.Id], device.Kind);
+            Assert.Equal(device.Kind, device.CreateConfiguration().Kind);
+        }
+    }
+
+    [Fact]
     public void KeychronQ1HeIsFirstAndUsesTheLinkRawHidQuery()
     {
         var device = BuiltInDevices.Catalog[0];

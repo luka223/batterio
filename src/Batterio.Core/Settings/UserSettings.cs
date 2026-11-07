@@ -13,6 +13,13 @@ public sealed class UserSettings
     public Dictionary<string, bool> DeviceSelections { get; init; } =
         new(StringComparer.OrdinalIgnoreCase);
 
+    // Devices the user opted in to show on the taskbar strip. Unlike popup
+    // selections, a missing entry means "not shown". The property is additive:
+    // older settings files omit it and deserialize it as empty.
+    [JsonPropertyName("taskbarSelections")]
+    public Dictionary<string, bool> TaskbarSelections { get; init; } =
+        new(StringComparer.OrdinalIgnoreCase);
+
     // Devices that have been connected to this PC at least once. Older settings
     // files omit this property. A stored selection does not imply the device is
     // known, because earlier versions listed every supported device for toggling.
@@ -26,6 +33,12 @@ public sealed class UserSettings
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
         return !DeviceSelections.TryGetValue(deviceId, out var selected) || selected;
+    }
+
+    public bool IsDeviceOnTaskbar(string deviceId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        return TaskbarSelections.TryGetValue(deviceId, out var onTaskbar) && onTaskbar;
     }
 
     public bool IsDeviceKnown(string deviceId)
@@ -45,6 +58,21 @@ public sealed class UserSettings
         {
             Version = Version,
             DeviceSelections = selections,
+            TaskbarSelections = CopyTaskbarSelections(),
+            KnownDevices = new HashSet<string>(KnownDevices, StringComparer.OrdinalIgnoreCase)
+        };
+    }
+
+    public UserSettings WithTaskbarSelection(string deviceId, bool onTaskbar)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        var taskbar = CopyTaskbarSelections();
+        taskbar[deviceId] = onTaskbar;
+        return new UserSettings
+        {
+            Version = Version,
+            DeviceSelections = new Dictionary<string, bool>(DeviceSelections, StringComparer.OrdinalIgnoreCase),
+            TaskbarSelections = taskbar,
             KnownDevices = new HashSet<string>(KnownDevices, StringComparer.OrdinalIgnoreCase)
         };
     }
@@ -54,13 +82,15 @@ public sealed class UserSettings
         ArgumentNullException.ThrowIfNull(deviceIds);
         var known = new HashSet<string>(KnownDevices, StringComparer.OrdinalIgnoreCase);
         var selections = new Dictionary<string, bool>(DeviceSelections, StringComparer.OrdinalIgnoreCase);
+        var taskbar = CopyTaskbarSelections();
         foreach (var deviceId in deviceIds.Where(id => !string.IsNullOrWhiteSpace(id)).Select(id => id.Trim()))
         {
             // A selection stored before the device was ever connected is stale; a
-            // newly connected device starts visible.
+            // newly connected device starts visible in the popup and off the taskbar.
             if (known.Add(deviceId))
             {
                 selections.Remove(deviceId);
+                taskbar.Remove(deviceId);
             }
         }
 
@@ -68,6 +98,7 @@ public sealed class UserSettings
         {
             Version = Version,
             DeviceSelections = selections,
+            TaskbarSelections = taskbar,
             KnownDevices = known
         };
     }
@@ -80,6 +111,15 @@ public sealed class UserSettings
             if (!string.IsNullOrWhiteSpace(pair.Key))
             {
                 selections[pair.Key.Trim()] = pair.Value;
+            }
+        }
+
+        var taskbar = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in TaskbarSelections ?? [])
+        {
+            if (!string.IsNullOrWhiteSpace(pair.Key))
+            {
+                taskbar[pair.Key.Trim()] = pair.Value;
             }
         }
 
@@ -96,7 +136,11 @@ public sealed class UserSettings
         {
             Version = Version,
             DeviceSelections = selections,
+            TaskbarSelections = taskbar,
             KnownDevices = known
         };
     }
+
+    private Dictionary<string, bool> CopyTaskbarSelections() =>
+        new(TaskbarSelections, StringComparer.OrdinalIgnoreCase);
 }

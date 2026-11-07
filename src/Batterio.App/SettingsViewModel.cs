@@ -199,6 +199,37 @@ public sealed class SettingsViewModel : INotifyPropertyChanged, IDisposable
         }
     }
 
+    public async Task SetDeviceOnTaskbarAsync(
+        DeviceSelectionItemViewModel item,
+        bool onTaskbar,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(item);
+        if (IsApplyingSnapshot || item.IsBusy)
+        {
+            return;
+        }
+
+        var previous = item.CommittedOnTaskbar;
+        item.IsOnTaskbar = onTaskbar;
+        item.IsBusy = true;
+        item.SetActionError(null);
+        try
+        {
+            await _selection.SetDeviceOnTaskbarAsync(item.DeviceId, onTaskbar, cancellationToken).ConfigureAwait(false);
+            item.CommitOnTaskbar(onTaskbar);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            item.IsOnTaskbar = previous;
+            item.SetActionError(exception.Message);
+        }
+        finally
+        {
+            item.IsBusy = false;
+        }
+    }
+
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
@@ -312,12 +343,16 @@ public sealed class DeviceSelectionItemViewModel : INotifyPropertyChanged
     private bool _isBusy;
     private string? _actionError;
     private bool _committedSelection;
+    private bool _isOnTaskbar;
+    private bool _committedOnTaskbar;
 
     public DeviceSelectionItemViewModel(DeviceSelectionState state)
     {
         _state = state;
         _isSelected = state.IsSelected;
         _committedSelection = state.IsSelected;
+        _isOnTaskbar = state.IsOnTaskbar;
+        _committedOnTaskbar = state.IsOnTaskbar;
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -341,11 +376,27 @@ public sealed class DeviceSelectionItemViewModel : INotifyPropertyChanged
             {
                 _isSelected = value;
                 OnPropertyChanged();
+                OnPropertyChanged(nameof(IsTaskbarEnabled));
             }
         }
     }
 
     internal bool CommittedSelection => _committedSelection;
+
+    public bool IsOnTaskbar
+    {
+        get => _isOnTaskbar;
+        set
+        {
+            if (_isOnTaskbar != value)
+            {
+                _isOnTaskbar = value;
+                OnPropertyChanged();
+            }
+        }
+    }
+
+    internal bool CommittedOnTaskbar => _committedOnTaskbar;
 
     public bool IsBusy
     {
@@ -357,11 +408,16 @@ public sealed class DeviceSelectionItemViewModel : INotifyPropertyChanged
                 _isBusy = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(IsEnabled));
+                OnPropertyChanged(nameof(IsTaskbarEnabled));
             }
         }
     }
 
     public bool IsEnabled => !IsBusy;
+
+    // The taskbar option only matters for a device that is shown in the popup (and so
+    // polled). Its stored value is kept while the device is switched off.
+    public bool IsTaskbarEnabled => !IsBusy && IsSelected;
 
     public string? Error => _actionError ?? _state.Error;
 
@@ -371,7 +427,9 @@ public sealed class DeviceSelectionItemViewModel : INotifyPropertyChanged
     {
         _state = state;
         _committedSelection = state.IsSelected;
+        _committedOnTaskbar = state.IsOnTaskbar;
         IsSelected = state.IsSelected;
+        IsOnTaskbar = state.IsOnTaskbar;
         OnPropertyChanged(string.Empty);
         OnPropertyChanged(nameof(Error));
         OnPropertyChanged(nameof(HasError));
@@ -388,6 +446,12 @@ public sealed class DeviceSelectionItemViewModel : INotifyPropertyChanged
     {
         _committedSelection = selected;
         IsSelected = selected;
+    }
+
+    public void CommitOnTaskbar(bool onTaskbar)
+    {
+        _committedOnTaskbar = onTaskbar;
+        IsOnTaskbar = onTaskbar;
     }
 
     private void OnPropertyChanged([CallerMemberName] string? propertyName = null) =>

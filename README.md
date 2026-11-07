@@ -12,11 +12,21 @@ Supported devices:
 
 Left-click the tray icon to open the popup, right-click it for the menu (Settings, Close). Batterio sends a Windows notification once per run when a device drops below 30% and when it is fully charged.
 
+### Taskbar strip
+
+Devices can also show their battery level on the taskbar, next to the system tray: a mouse, keyboard or headphones glyph, the percentage, and an amber lightning bolt while charging. It is off by default. In **Settings**, tick the **Taskbar** box of a device (it needs the **Popup** box ticked as well). A device that is offline or disconnected stays on the strip, dimmed, with `--` instead of a percentage. For the SteelSeries Arctis Nova Pro Omni only the main battery is shown. Clicking the strip works like clicking the tray icon: left-click toggles the popup, right-click opens the menu.
+
+The strip is shown on the primary taskbar only, and only while the taskbar is at the bottom of the screen. On a crowded, left-aligned taskbar it can overlap pinned apps.
+
 ## Screenshots
 
 - **Popup**
 
   ![Popup](docs/screenshots/popup3.png)
+
+- **Taskbar strip**
+
+  ![Taskbar strip](docs/screenshots/taskbar.png)
 
 - **Disabled (turned off) device**
 
@@ -28,7 +38,7 @@ Left-click the tray icon to open the popup, right-click it for the menu (Setting
 
 - **Settings**
 
-  ![Settings](docs/screenshots/settings2.png)
+  ![Settings](docs/screenshots/settings3.png)
 
 ## Technologies
 
@@ -41,7 +51,7 @@ Left-click the tray icon to open the popup, right-click it for the menu (Setting
 | Path | Purpose |
 | --- | --- |
 | `src/Batterio.Core` | Device adapters, polling, notifications logic, settings |
-| `src/Batterio.App` | MAUI/WinUI tray app and popup (`Batterio.Runtime.exe`) |
+| `src/Batterio.App` | MAUI/WinUI tray app, popup and native taskbar strip (`Batterio.Runtime.exe`) |
 | `src/Batterio.Startup` | NativeAOT launcher (`Batterio.App.exe` / `Batterio.exe`) |
 | `tests/` | Unit tests plus manual startup and notification probes |
 | `eng/` | Publish scripts |

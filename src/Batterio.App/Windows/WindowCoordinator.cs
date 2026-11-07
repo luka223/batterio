@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Batterio.Core;
 using Batterio.Core.Abstractions;
 using Microsoft.UI.Windowing;
@@ -17,6 +18,7 @@ public sealed class WindowCoordinator : IWindowCoordinator
 {
     private const nuint SettingsMenuCommandId = 1;
     private const nuint CloseMenuCommandId = 2;
+    private static readonly TimeSpan AutoHideReopenSuppression = TimeSpan.FromMilliseconds(300);
 
     private readonly ITrayService _tray;
     private readonly DeviceSelectionCoordinator? _selection;
@@ -27,6 +29,7 @@ public sealed class WindowCoordinator : IWindowCoordinator
     private Window? _settingsWindow;
     private bool _showRequested;
     private bool _allowClose;
+    private long _lastAutoHideTimestamp;
 
     public WindowCoordinator(
         ITrayService tray,
@@ -82,7 +85,18 @@ public sealed class WindowCoordinator : IWindowCoordinator
         }
     }
 
-    private void OnPopupDeactivated(object? sender, EventArgs e) => HidePopup();
+    private void OnPopupDeactivated(object? sender, EventArgs e)
+    {
+        // Clicking the taskbar strip (or tray icon) activates explorer, which hides the popup
+        // before the click reaches TogglePopup. Remember when that happened so the click that
+        // caused it closes the popup instead of reopening it.
+        if (_popupWindow is { } popup && GetAppWindow(popup) is { IsVisible: true })
+        {
+            _lastAutoHideTimestamp = Stopwatch.GetTimestamp();
+        }
+
+        HidePopup();
+    }
 
     public void TogglePopup()
     {
@@ -96,11 +110,20 @@ public sealed class WindowCoordinator : IWindowCoordinator
         {
             HidePopup();
         }
+        else if (WasAutoHiddenRecently())
+        {
+            // The popup was just dismissed by this very click: treat it as "close".
+            _lastAutoHideTimestamp = 0;
+        }
         else
         {
             ShowPopup();
         }
     }
+
+    private bool WasAutoHiddenRecently() =>
+        _lastAutoHideTimestamp != 0 &&
+        Stopwatch.GetElapsedTime(_lastAutoHideTimestamp) < AutoHideReopenSuppression;
 
     public void ShowPopup()
     {

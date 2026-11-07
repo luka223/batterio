@@ -117,6 +117,31 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         }
     }
 
+    public async Task SetDeviceOnTaskbarAsync(
+        string deviceId,
+        bool onTaskbar,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
+        await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var updated = _settings.WithTaskbarSelection(deviceId, onTaskbar);
+            await _settingsStore.SaveAsync(updated, cancellationToken).ConfigureAwait(false);
+
+            // The in-memory preference is committed only after durable storage succeeds.
+            // Polling is unaffected by the taskbar preference, so it is not reconciled.
+            _settings = updated;
+            _discoverySnapshot = _discovery.CurrentSnapshot;
+            PublishSelectionSnapshot(CreateSnapshot(isLoading: false));
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
     public async Task StopAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);
@@ -230,6 +255,7 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
                 Device = device.Device,
                 IsPresent = device.IsPresent,
                 IsSelected = _settings.IsDeviceSelected(device.DeviceId),
+                IsOnTaskbar = _settings.IsDeviceOnTaskbar(device.DeviceId),
                 Error = device.Error
             })
             .ToArray();

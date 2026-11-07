@@ -8,11 +8,16 @@ public sealed record DeviceSelectionState
 
     public bool IsSelected { get; init; }
 
+    /// <summary>The user opted in to show this device on the taskbar strip.</summary>
+    public bool IsOnTaskbar { get; init; }
+
     public string? Error { get; init; }
 
     public string DeviceId => Device.Id;
 
     public string Name => Device.Name;
+
+    public DeviceKind Kind => Device.Kind;
 }
 
 public sealed record DeviceSelectionSnapshot

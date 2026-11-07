@@ -10,6 +10,7 @@ public static class BuiltInDevices
             Id = "keychron-q1-he",
             Name = "Keychron Q1 HE",
             AdapterId = "keychron-q1-he",
+            Kind = DeviceKind.Keyboard,
             PresenceQueries = [KeychronDefinitions.LinkRawHidQuery]
         },
         new BuiltInDeviceDefinition
@@ -17,6 +18,7 @@ public static class BuiltInDevices
             Id = "logitech-g-pro-x2-superstrike",
             Name = "Logitech G Pro X2 Superstrike",
             AdapterId = "logitech-g-pro-x2-superstrike",
+            Kind = DeviceKind.Mouse,
             PresenceQueries =
             [
                 LogitechReceiverDefinitions.SuperstrikeWiredQuery,
@@ -28,6 +30,7 @@ public static class BuiltInDevices
             Id = "logitech-g-pro-x2-lightspeed",
             Name = "Logitech G Pro X2 Lightspeed",
             AdapterId = "logitech-g-pro-x2-lightspeed",
+            Kind = DeviceKind.Mouse,
             PresenceQueries = [LogitechReceiverDefinitions.LightspeedQuery]
         },
         new BuiltInDeviceDefinition
@@ -35,6 +38,7 @@ public static class BuiltInDevices
             Id = "steelseries-arctis-nova-pro-omni",
             Name = "SteelSeries Arctis Nova Pro Omni",
             AdapterId = "steelseries-arctis-nova-pro-omni",
+            Kind = DeviceKind.Headset,
             HasReserveBattery = true,
             PresenceQueries = [SteelSeriesDefinitions.NovaProOmniQuery]
         },
@@ -43,6 +47,7 @@ public static class BuiltInDevices
             Id = "logitech-mx-master-3s",
             Name = "Logitech MX Master 3S",
             AdapterId = "logitech-mx-master-3s",
+            Kind = DeviceKind.Mouse,
             PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery]
         },
         new BuiltInDeviceDefinition
@@ -50,6 +55,7 @@ public static class BuiltInDevices
             Id = "logitech-mx-keys-mechanical",
             Name = "Logitech MX Keys Mechanical",
             AdapterId = "logitech-mx-keys-mechanical",
+            Kind = DeviceKind.Keyboard,
             PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery]
         }
     ];

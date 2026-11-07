@@ -10,6 +10,8 @@ public sealed record BuiltInDeviceDefinition
 
     public required string AdapterId { get; init; }
 
+    public required DeviceKind Kind { get; init; }
+
     public required IReadOnlyList<HidCollectionQuery> PresenceQueries { get; init; }
 
     /// <summary>The device reports a second (reserve) battery that is shown beneath the primary one.</summary>
@@ -20,6 +22,7 @@ public sealed record BuiltInDeviceDefinition
         Id = Id,
         Name = Name,
         AdapterId = AdapterId,
+        Kind = Kind,
         Enabled = true,
         HasReserveBattery = HasReserveBattery
     };

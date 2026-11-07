@@ -11,6 +11,10 @@ public sealed class DeviceConfiguration
     [JsonPropertyName("name")]
     public string Name { get; init; } = string.Empty;
 
+    [JsonPropertyName("kind")]
+    [JsonConverter(typeof(JsonStringEnumConverter))]
+    public DeviceKind Kind { get; init; } = DeviceKind.Mouse;
+
     [JsonPropertyName("photoPath")]
     public string? PhotoPath { get; init; }
 

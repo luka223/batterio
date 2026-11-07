@@ -238,6 +238,101 @@ public sealed class SettingsDiscoveryTests
         Assert.False(hidden.IsDeviceSelected("mouse"));
     }
 
+    [Fact]
+    public async Task TaskbarSelectionsDefaultToOffAndRoundTrip()
+    {
+        using var fixture = new TempDirectory();
+        var store = new JsonUserSettingsStore(Path.Combine(fixture.Path, "settings.json"));
+
+        var defaults = await store.LoadAsync();
+        Assert.False(defaults.IsDeviceOnTaskbar("Device-A"));
+
+        await store.SaveAsync(defaults.WithTaskbarSelection("Device-A", true));
+        var json = await File.ReadAllTextAsync(store.FilePath);
+        Assert.Contains("taskbarSelections", json);
+
+        var reloaded = await store.LoadAsync();
+        Assert.True(reloaded.IsDeviceOnTaskbar("device-a"));
+        Assert.False(reloaded.IsDeviceOnTaskbar("device-b"));
+        Assert.True(reloaded.IsDeviceSelected("device-a"));
+    }
+
+    [Fact]
+    public async Task SettingsFilesWithoutTaskbarSelectionsLoadWithNothingOnTheTaskbar()
+    {
+        using var fixture = new TempDirectory();
+        var path = Path.Combine(fixture.Path, "settings.json");
+        await File.WriteAllTextAsync(path, "{\"version\":1,\"deviceSelections\":{\"mouse\":false},\"knownDevices\":[\"mouse\"]}");
+        var store = new JsonUserSettingsStore(path);
+
+        var settings = await store.LoadAsync();
+
+        Assert.False(settings.IsDeviceOnTaskbar("mouse"));
+        Assert.False(settings.IsDeviceSelected("mouse"));
+        Assert.True(settings.IsDeviceKnown("mouse"));
+    }
+
+    [Fact]
+    public void SettingsTransformsPreserveTaskbarSelections()
+    {
+        var settings = UserSettings.Defaults()
+            .WithTaskbarSelection("mouse", true)
+            .WithTaskbarSelection("keyboard", false);
+
+        var selected = settings.WithDeviceSelection("mouse", false);
+        Assert.True(selected.IsDeviceOnTaskbar("mouse"));
+        Assert.False(selected.IsDeviceSelected("mouse"));
+
+        var known = settings.WithKnownDevices(new[] { "other" });
+        Assert.True(known.IsDeviceOnTaskbar("mouse"));
+        Assert.True(known.IsDeviceKnown("other"));
+
+        var normalized = new UserSettings
+        {
+            TaskbarSelections = new Dictionary<string, bool> { [" Mouse "] = true }
+        }.Normalize();
+        Assert.True(normalized.IsDeviceOnTaskbar("MOUSE"));
+
+        var toggled = settings.WithTaskbarSelection("mouse", false);
+        Assert.False(toggled.IsDeviceOnTaskbar("mouse"));
+        Assert.True(settings.IsDeviceOnTaskbar("mouse"));
+    }
+
+    [Fact]
+    public async Task SelectionCoordinatorPublishesTheTaskbarFlagWithoutChangingPolling()
+    {
+        using var fixture = new TempDirectory();
+        var definition = Definition("first", 0x1000);
+        var provider = new FakeHidProvider { Collections = new[] { Collection(definition.PresenceQueries[0]) } };
+        var registry = new AdapterRegistry(new[] { new TestFactory(definition.AdapterId) });
+        var settingsPath = Path.Combine(fixture.Path, "settings.json");
+        await using var polling = new PollingCoordinator(registry);
+        await using var discovery = new DeviceDiscoveryService(new[] { definition }, registry, provider);
+        await using var store = new JsonUserSettingsStore(settingsPath);
+        await using var selection = new DeviceSelectionCoordinator(new[] { definition }, store, discovery, polling);
+
+        await selection.StartAsync();
+        Assert.False(Assert.Single(selection.CurrentSnapshot.Devices).IsOnTaskbar);
+        Assert.Equal(DeviceKind.Mouse, Assert.Single(selection.CurrentSnapshot.Devices).Kind);
+
+        var published = new List<DeviceSelectionSnapshot>();
+        selection.SnapshotChanged += (_, e) => published.Add(e.Snapshot);
+
+        await selection.SetDeviceOnTaskbarAsync(definition.Id, true);
+
+        var state = Assert.Single(selection.CurrentSnapshot.Devices);
+        Assert.True(state.IsOnTaskbar);
+        Assert.True(state.IsSelected);
+        Assert.Single(polling.States);
+        Assert.Contains(published, snapshot => snapshot.Devices.Single().IsOnTaskbar);
+        Assert.True((await store.LoadAsync()).IsDeviceOnTaskbar(definition.Id));
+
+        await selection.SetDeviceSelectedAsync(definition.Id, false);
+        state = Assert.Single(selection.CurrentSnapshot.Devices);
+        Assert.False(state.IsSelected);
+        Assert.True(state.IsOnTaskbar);
+    }
+
     private static BuiltInDeviceDefinition Definition(string id, ushort vendorId) =>
         Definition(id, Query(vendorId));
 
@@ -246,6 +341,7 @@ public sealed class SettingsDiscoveryTests
         Id = id,
         Name = id,
         AdapterId = id,
+        Kind = DeviceKind.Mouse,
         PresenceQueries = queries
     };
 

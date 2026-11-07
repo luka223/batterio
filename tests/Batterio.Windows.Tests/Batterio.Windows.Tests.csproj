@@ -16,6 +16,7 @@
     <Compile Include="../../src/Batterio.App/Windows/TrayService.cs" Link="Windows/TrayService.cs" />
     <Compile Include="../../src/Batterio.App/Windows/WindowsTrayNativePlatform.cs" Link="Windows/WindowsTrayNativePlatform.cs" />
     <Compile Include="../../src/Batterio.App/Windows/Win32Native.cs" Link="Windows/Win32Native.cs" />
+    <Compile Include="../../src/Batterio.App/Windows/TaskbarStripRenderer.cs" Link="Windows/TaskbarStripRenderer.cs" />
     <Compile Include="../../src/Batterio.App/Windows/RuntimeStartupSequence.cs" Link="Windows/RuntimeStartupSequence.cs" />
     <Compile Include="../../src/Batterio.App/Windows/RuntimeStartupCompletionCoordinator.cs" Link="Windows/RuntimeStartupCompletionCoordinator.cs" />
     <ProjectReference Include="..\\..\\src\\Batterio.Core\\Batterio.Core.csproj" />
@@ -23,5 +24,6 @@
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="0.3.106" PrivateAssets="all" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.0" />
   </ItemGroup>
 </Project>

@@ -225,5 +225,137 @@ internal static class Win32Native
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     internal static extern int Shell_NotifyIconGetRect(ref NotifyIconIdentifier identifier, out Rect iconLocation);
+
+    // ---- Taskbar strip (layered child window of Shell_TrayWnd) ----
+
+    internal const uint WM_MOUSEACTIVATE = 0x0021;
+    internal const uint WM_DISPLAYCHANGE = 0x007E;
+    internal const uint WM_SETTINGCHANGE = 0x001A;
+    internal const uint WM_THEMECHANGED = 0x031A;
+    internal const uint WM_DPICHANGED = 0x02E0;
+    internal const nint MA_NOACTIVATE = 3;
+
+    internal const uint WS_CHILD = 0x40000000;
+    internal const uint WS_VISIBLE = 0x10000000;
+    internal const uint WS_EX_LAYERED = 0x00080000;
+    internal const int GWL_STYLE = -16;
+    internal const int GWL_EXSTYLE = -20;
+
+    internal const uint ULW_ALPHA = 0x00000002;
+    internal const byte AC_SRC_OVER = 0x00;
+    internal const byte AC_SRC_ALPHA = 0x01;
+
+    internal const uint SWP_NOSIZE = 0x0001;
+    internal const uint SWP_NOMOVE = 0x0002;
+    internal const uint SWP_NOZORDER = 0x0004;
+    internal const uint SWP_NOACTIVATE = 0x0010;
+    internal const uint SWP_SHOWWINDOW = 0x0040;
+    internal const uint SWP_HIDEWINDOW = 0x0080;
+    internal static readonly nint HWND_TOP = 0;
+
+    internal const int IDC_ARROW = 32512;
+    internal const uint DIB_RGB_COLORS = 0;
+    internal const uint BI_RGB = 0;
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct Size
+    {
+        public int Width;
+        public int Height;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BlendFunction
+    {
+        public byte BlendOp;
+        public byte BlendFlags;
+        public byte SourceConstantAlpha;
+        public byte AlphaFormat;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct BitmapInfoHeader
+    {
+        public uint Size;
+        public int Width;
+        public int Height;
+        public ushort Planes;
+        public ushort BitCount;
+        public uint Compression;
+        public uint SizeImage;
+        public int XPelsPerMeter;
+        public int YPelsPerMeter;
+        public uint ColorsUsed;
+        public uint ColorsImportant;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint FindWindow(string className, string? windowName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern nint FindWindowEx(nint parent, nint childAfter, string? className, string? windowName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nint SetParent(nint child, nint newParent);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetParent(nint window);
+
+    [DllImport("user32.dll")]
+    internal static extern bool IsWindow(nint window);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool GetWindowRect(nint window, out Rect rect);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool SetWindowPos(nint window, nint insertAfter, int x, int y, int width, int height, uint flags);
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongPtrW", SetLastError = true)]
+    internal static extern nint GetWindowLongPtr(nint window, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongPtrW", SetLastError = true)]
+    internal static extern nint SetWindowLongPtr(nint window, int index, nint value);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern bool UpdateLayeredWindow(
+        nint window,
+        nint destinationDc,
+        nint destinationPoint,
+        ref Size size,
+        nint sourceDc,
+        ref Point sourcePoint,
+        uint colorKey,
+        ref BlendFunction blend,
+        uint flags);
+
+    [DllImport("user32.dll")]
+    internal static extern nint GetDC(nint window);
+
+    [DllImport("user32.dll")]
+    internal static extern int ReleaseDC(nint window, nint dc);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    internal static extern nint LoadCursor(nint instance, nint cursorName);
+
+    [DllImport("gdi32.dll")]
+    internal static extern nint CreateCompatibleDC(nint dc);
+
+    [DllImport("gdi32.dll", SetLastError = true)]
+    internal static extern nint CreateDIBSection(
+        nint dc,
+        ref BitmapInfoHeader bitmapInfo,
+        uint usage,
+        out nint bits,
+        nint section,
+        uint offset);
+
+    [DllImport("gdi32.dll")]
+    internal static extern nint SelectObject(nint dc, nint gdiObject);
+
+    [DllImport("gdi32.dll")]
+    internal static extern bool DeleteObject(nint gdiObject);
+
+    [DllImport("gdi32.dll")]
+    internal static extern bool DeleteDC(nint dc);
 }
 

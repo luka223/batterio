@@ -10,6 +10,7 @@ public sealed class BatteryApplication : IAsyncDisposable
 {
     private readonly PollingCoordinator _polling;
     private readonly ITrayService _tray;
+    private readonly ITaskbarStripService _strip;
     private readonly WindowCoordinator _windows;
     private readonly DeviceSelectionCoordinator _selection;
     private readonly BatteryNotificationCoordinator _batteryNotifications;
@@ -29,6 +30,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         DeviceSelectionCoordinator selection,
         BatteryNotificationCoordinator batteryNotifications,
         ITrayService tray,
+        ITaskbarStripService strip,
         WindowCoordinator windows,
         IStartupRegistrationService startupRegistration,
         IBatterioLog log,
@@ -38,6 +40,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         _selection = selection;
         _batteryNotifications = batteryNotifications;
         _tray = tray;
+        _strip = strip;
         _windows = windows;
         _startupRegistration = startupRegistration;
         _log = log;
@@ -47,10 +50,14 @@ public sealed class BatteryApplication : IAsyncDisposable
         _windows.SetViewModel(ViewModel);
         _tray.ActionRaised += OnTrayAction;
         _tray.SystemResumed += OnSystemResumed;
+        // The taskbar strip behaves exactly like a click on the tray icon.
+        _strip.ActionRaised += OnTrayAction;
+        _polling.SnapshotChanged += OnPollingSnapshotChanged;
+        _selection.SnapshotChanged += OnSelectionSnapshotChanged;
         _windows.MenuActionRequested += OnMenuAction;
         _startup = new RuntimeStartupSequence(
             _windows.HidePopup,
-            () => _tray.StartAsync(),
+            StartTrayAndTaskbarStripAsync,
             () => _batteryNotifications.StartAsync(),
             StartSelectionAndPollingAsync,
             exception => _log.Log(BatterioLogLevel.Critical, "Batterio failed to start.", exception));
@@ -90,6 +97,38 @@ public sealed class BatteryApplication : IAsyncDisposable
         _boundedExit = new BoundedCleanupProcessExit(_processTerminator);
     }
 
+    private async Task StartTrayAndTaskbarStripAsync()
+    {
+        await _tray.StartAsync().ConfigureAwait(false);
+
+        // The strip is optional: if it cannot start, the tray icon and popup keep working.
+        try
+        {
+            await _strip.StartAsync().ConfigureAwait(false);
+            UpdateTaskbarStrip();
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            _log.Log(BatterioLogLevel.Warning, "The taskbar strip could not be started.", exception);
+        }
+    }
+
+    private void OnPollingSnapshotChanged(object? sender, PollingSnapshotChangedEventArgs e) => UpdateTaskbarStrip();
+
+    private void OnSelectionSnapshotChanged(object? sender, DeviceSelectionSnapshotChangedEventArgs e) => UpdateTaskbarStrip();
+
+    private void UpdateTaskbarStrip()
+    {
+        try
+        {
+            _strip.Update(TaskbarStripModel.Build(_selection.CurrentSnapshot, _polling.CurrentSnapshot));
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Warning, "Could not update the taskbar strip.", exception);
+        }
+    }
+
     private async Task StartSelectionAndPollingAsync()
     {
         await _selection.StartAsync().ConfigureAwait(false);
@@ -121,6 +160,7 @@ public sealed class BatteryApplication : IAsyncDisposable
         await _selection.StopAsync().ConfigureAwait(false);
         await _batteryNotifications.StopAsync().ConfigureAwait(false);
         await _polling.StopAsync(TimeSpan.FromMilliseconds(750)).ConfigureAwait(false);
+        await _strip.StopAsync().ConfigureAwait(false);
         await _tray.StopAsync().ConfigureAwait(false);
         await _windows.CloseAsync().ConfigureAwait(false);
     }
@@ -130,10 +170,14 @@ public sealed class BatteryApplication : IAsyncDisposable
         WindowsToastActivation.Current.Stop();
         _tray.ActionRaised -= OnTrayAction;
         _tray.SystemResumed -= OnSystemResumed;
+        _strip.ActionRaised -= OnTrayAction;
+        _polling.SnapshotChanged -= OnPollingSnapshotChanged;
+        _selection.SnapshotChanged -= OnSelectionSnapshotChanged;
         _windows.MenuActionRequested -= OnMenuAction;
         await _batteryNotifications.DisposeAsync().ConfigureAwait(false);
         await _selection.DisposeAsync().ConfigureAwait(false);
         await _polling.DisposeAsync().ConfigureAwait(false);
+        await _strip.DisposeAsync().ConfigureAwait(false);
         await _tray.DisposeAsync().ConfigureAwait(false);
     }
 

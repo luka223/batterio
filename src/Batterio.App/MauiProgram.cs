@@ -54,6 +54,7 @@ public static class MauiProgram
         builder.Services.AddSingleton<WindowCoordinator>();
         builder.Services.AddSingleton<IWindowCoordinator>(services => services.GetRequiredService<WindowCoordinator>());
         builder.Services.AddSingleton<ITrayService, TrayService>();
+        builder.Services.AddSingleton<ITaskbarStripService, TaskbarStripService>();
         builder.Services.AddSingleton<BatteryApplication>(services =>
         {
             var application = ActivatorUtilities.CreateInstance<BatteryApplication>(services);

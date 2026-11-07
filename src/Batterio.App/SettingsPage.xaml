@@ -27,17 +27,24 @@
 
                 <BoxView HeightRequest="1" Opacity="0.2" />
                 <Label Text="Devices" FontSize="22" FontAttributes="Bold" />
-                <Label Text="Choose which of your devices appear in the tray popup. Devices are listed once they have been connected to this PC."
+                <Label Text="Choose which of your devices appear in the tray popup, and which also show their battery level next to the system tray on the taskbar. Devices are listed once they have been connected to this PC."
                        FontSize="13" Opacity="0.7" />
                 <ActivityIndicator IsRunning="{Binding IsLoading}" IsVisible="{Binding IsLoading}" />
                 <Label Text="{Binding Error}" IsVisible="{Binding HasError}"
                        TextColor="#DC2626" FontSize="12" />
                 <Label Text="No supported devices have been discovered."
                        IsVisible="{Binding HasNoDevices}" Opacity="0.7" />
+                <Grid ColumnDefinitions="*,64,64" ColumnSpacing="20"
+                      IsVisible="{Binding HasDevices}">
+                    <Label Grid.Column="1" Text="Popup" FontSize="12" Opacity="0.65"
+                           HorizontalTextAlignment="Center" />
+                    <Label Grid.Column="2" Text="Taskbar" FontSize="12" Opacity="0.65"
+                           HorizontalTextAlignment="Center" />
+                </Grid>
                 <VerticalStackLayout BindableLayout.ItemsSource="{Binding Devices}" Spacing="4">
                     <BindableLayout.ItemTemplate>
                         <DataTemplate>
-                            <Grid ColumnDefinitions="*,Auto" Padding="0,8" ColumnSpacing="20">
+                            <Grid ColumnDefinitions="*,64,64" Padding="0,8" ColumnSpacing="20">
                                 <VerticalStackLayout Spacing="2">
                                     <Label Text="{Binding Name}" FontAttributes="Bold" />
                                     <Label Text="{Binding ConnectionText}" FontSize="12" Opacity="0.65" />
@@ -47,8 +54,15 @@
                                 <CheckBox Grid.Column="1" IsChecked="{Binding IsSelected, Mode=OneWay}"
                                           IsEnabled="{Binding IsEnabled}"
                                           CheckedChanged="OnDeviceCheckedChanged"
+                                          HorizontalOptions="Center"
                                           VerticalOptions="Center"
                                           SemanticProperties.Description="Show this device in the tray popup" />
+                                <CheckBox Grid.Column="2" IsChecked="{Binding IsOnTaskbar, Mode=OneWay}"
+                                          IsEnabled="{Binding IsTaskbarEnabled}"
+                                          CheckedChanged="OnTaskbarCheckedChanged"
+                                          HorizontalOptions="Center"
+                                          VerticalOptions="Center"
+                                          SemanticProperties.Description="Show this device on the taskbar" />
                             </Grid>
                         </DataTemplate>
                     </BindableLayout.ItemTemplate>

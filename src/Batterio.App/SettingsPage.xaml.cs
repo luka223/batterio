@@ -43,4 +43,19 @@ public partial class SettingsPage : ContentPage
             _ = viewModel.SetDeviceSelectedAsync(item, e.Value);
         }
     }
+
+    private void OnTaskbarCheckedChanged(object? sender, CheckedChangedEventArgs e)
+    {
+        var viewModel = ViewModel;
+        if (viewModel?.IsApplyingSnapshot == true ||
+            sender is not CheckBox { BindingContext: DeviceSelectionItemViewModel item })
+        {
+            return;
+        }
+
+        if (viewModel is not null)
+        {
+            _ = viewModel.SetDeviceOnTaskbarAsync(item, e.Value);
+        }
+    }
 }
