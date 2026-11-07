@@ -119,16 +119,29 @@ public sealed class LogitechBoltAdapter : IBatteryAdapter
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var bluetooth = FindCollections(_profile.BluetoothQueries);
-        var receivers = FindCollections(new[] { LogitechReceiverDefinitions.BoltReceiverQuery });
+        BatteryAdapterException? endpointFailure = null;
+        HidCollectionInfo[] FindAvailableCollections(IEnumerable<HidCollectionQuery> queries)
+        {
+            try
+            {
+                return FindCollections(queries);
+            }
+            catch (BatteryAdapterException exception) when (exception.Kind is BatteryAdapterErrorKind.AccessFailure or BatteryAdapterErrorKind.DeviceBusy)
+            {
+                endpointFailure ??= exception;
+                return Array.Empty<HidCollectionInfo>();
+            }
+        }
+
+        var bluetooth = FindAvailableCollections(_profile.BluetoothQueries);
+        var receivers = FindAvailableCollections(new[] { LogitechReceiverDefinitions.BoltReceiverQuery });
         if (bluetooth.Length == 0 && receivers.Length == 0)
         {
-            throw new BatteryAdapterException(BatteryAdapterErrorKind.ReceiverMissing, _devicePath is null
+            throw endpointFailure ?? new BatteryAdapterException(BatteryAdapterErrorKind.ReceiverMissing, _devicePath is null
                 ? $"No Bluetooth connection to {_profile.DisplayName} and no Logi Bolt receiver HID++ endpoint was found."
                 : $"The configured HID++ endpoint path '{_devicePath}' was not found.");
         }
 
-        BatteryAdapterException? endpointFailure = null;
         foreach (var endpoint in bluetooth)
         {
             try
