@@ -114,10 +114,18 @@ public sealed class BuiltInDeviceTests
     [Fact]
     public void MxDevicesShareTheBoltReceiverPresenceQuery()
     {
-        foreach (var id in new[] { "logitech-mx-master-3s", "logitech-mx-keys-mechanical" })
+        foreach (var (id, bluetoothProductId) in new[] { ("logitech-mx-master-3s", (ushort)0xB034), ("logitech-mx-keys-mechanical", (ushort)0xB366) })
         {
             var device = BuiltInDevices.Catalog.Single(entry => entry.Id == id);
-            Assert.Same(LogitechReceiverDefinitions.BoltReceiverQuery, Assert.Single(device.PresenceQueries));
+            Assert.Equal(2, device.PresenceQueries.Count);
+            Assert.Same(LogitechReceiverDefinitions.BoltReceiverQuery, device.PresenceQueries[0]);
+            var bluetooth = device.PresenceQueries[1];
+            Assert.Equal((ushort)0x046D, bluetooth.VendorId);
+            Assert.Equal(bluetoothProductId, bluetooth.ProductId);
+            Assert.Null(bluetooth.InterfaceNumber);
+            Assert.Equal((ushort)0xFF43, bluetooth.UsagePage);
+            Assert.Equal((ushort)0x0202, bluetooth.Usage);
+            Assert.Equal((byte)0x11, bluetooth.RequiredReportId);
         }
 
         var query = LogitechReceiverDefinitions.BoltReceiverQuery;

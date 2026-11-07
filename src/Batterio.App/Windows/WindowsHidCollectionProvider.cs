@@ -18,6 +18,8 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
     private const uint FileFlagOverlapped = 0x40000000;
     private const int HidpStatusSuccess = 0x00110000;
     private static readonly Regex VendorProductRegex = new(@"VID_([0-9A-F]{4})&PID_([0-9A-F]{4})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    // Bluetooth LE HID paths encode the vendor ID with a source prefix (01 = Bluetooth SIG, 02 = USB-IF): VID&02046D_PID&B034.
+    private static readonly Regex BluetoothVendorProductRegex = new(@"VID&0[12]([0-9A-F]{4})_PID&([0-9A-F]{4})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex InterfaceRegex = new(@"&MI_([0-9A-F]{2})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query)
@@ -180,9 +182,10 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
     // cbSize is 8 on x64, but DevicePath follows the DWORD at offset 4 on both architectures.
     internal static string? ReadDevicePath(nint detail) => Marshal.PtrToStringUni(detail + sizeof(uint));
 
-    private static (ushort VendorId, ushort ProductId, ushort? InterfaceNumber)? ParseIdentity(string path)
+    internal static (ushort VendorId, ushort ProductId, ushort? InterfaceNumber)? ParseIdentity(string path)
     {
         var match = VendorProductRegex.Match(path);
+        if (!match.Success) match = BluetoothVendorProductRegex.Match(path);
         if (!match.Success ||
             !ushort.TryParse(match.Groups[1].Value, System.Globalization.NumberStyles.HexNumber, null, out var vendorId) ||
             !ushort.TryParse(match.Groups[2].Value, System.Globalization.NumberStyles.HexNumber, null, out var productId))

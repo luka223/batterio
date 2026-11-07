@@ -48,7 +48,7 @@ public static class BuiltInDevices
             Name = "Logitech MX Master 3S",
             AdapterId = "logitech-mx-master-3s",
             Kind = DeviceKind.Mouse,
-            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery]
+            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery, .. LogitechBoltDeviceProfile.MxMaster3s.BluetoothQueries]
         },
         new BuiltInDeviceDefinition
         {
@@ -56,7 +56,7 @@ public static class BuiltInDevices
             Name = "Logitech MX Keys Mechanical",
             AdapterId = "logitech-mx-keys-mechanical",
             Kind = DeviceKind.Keyboard,
-            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery]
+            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery, .. LogitechBoltDeviceProfile.MxKeysMechanical.BluetoothQueries]
         }
     ];
 

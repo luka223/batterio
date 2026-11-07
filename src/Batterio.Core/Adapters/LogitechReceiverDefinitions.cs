@@ -61,6 +61,31 @@ public static class LogitechReceiverDefinitions
         RequiredReportId = 0x11
     };
 
+    /// <summary>The Bolt receiver's short-report (0x10) HID++ collection, where it sends HID++ 1.0 error replies.</summary>
+    public static readonly HidCollectionQuery BoltReceiverShortQuery = new()
+    {
+        VendorId = LogitechBoltAdapter.VendorId,
+        ProductId = LogitechBoltAdapter.ReceiverProductId,
+        InterfaceNumber = LogitechBoltAdapter.InterfaceNumber,
+        UsagePage = 0xFF00,
+        MinimumReportLength = 7,
+        RequiredReportId = 0x10
+    };
+
+    /// <summary>
+    /// The HID++ collection of a Logitech device connected directly over Bluetooth LE
+    /// (shown by Windows as "Logitech Download Assistant"): vendor usage page 0xFF43, usage 0x0202, long reports only.
+    /// </summary>
+    public static HidCollectionQuery BluetoothHidppQuery(ushort productId) => new()
+    {
+        VendorId = LogitechBoltAdapter.VendorId,
+        ProductId = productId,
+        UsagePage = 0xFF43,
+        Usage = 0x0202,
+        MinimumReportLength = 20,
+        RequiredReportId = 0x11
+    };
+
     public static readonly HidCollectionQuery LightspeedQuery = new()
     {
         VendorId = LogitechGProX2LightspeedAdapter.VendorId,
