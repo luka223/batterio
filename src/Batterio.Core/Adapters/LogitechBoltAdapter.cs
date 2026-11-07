@@ -247,6 +247,11 @@ public sealed class LogitechBoltAdapter : IBatteryAdapter
             _log.Log(BatterioLogLevel.Trace, $"Bluetooth endpoint '{endpoint.DevicePath}' was not usable: {exception.Message}");
             return null;
         }
+        catch (System.IO.IOException exception)
+        {
+            throw new BatteryAdapterException(BatteryAdapterErrorKind.AccessFailure,
+                $"Could not communicate with Bluetooth endpoint '{endpoint.DevicePath}'.", exception);
+        }
     }
 
     private async Task<BatteryReading?> ScanReceiverAsync(
