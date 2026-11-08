@@ -1,0 +1,90 @@
+# Publishes a GitHub release whenever main carries a <Version> (Directory.Build.props)
+# that is greater than the latest published release. Tags follow the existing
+# format without a "v" prefix (1.2.0, 1.3.0, ...), and the asset must be named
+# Batterio.exe because the in-app auto-updater looks for exactly that name.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# Never let two pushes race to create the same release.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      DOTNET_NOLOGO: "true"
+      DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Decide whether to release
+        id: check
+        shell: pwsh
+        run: |
+          $raw = ([xml](Get-Content Directory.Build.props)).Project.PropertyGroup.Version |
+                 Where-Object { $_ } | Select-Object -First 1
+          if (-not $raw) { throw "No <Version> found in Directory.Build.props." }
+          $version = [version]$raw.Trim()
+
+          $latestTag = gh release view --json tagName --jq .tagName 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $latestTag) {
+            Write-Host "No published release found; treating latest as 0.0.0."
+            $latestTag = "0.0.0"
+          }
+          $latest = [version]($latestTag.Trim().TrimStart('v', 'V'))
+
+          $release = $version -gt $latest
+          Write-Host "Project version: $version; latest release: $latest; release: $release"
+          if ($release) {
+            gh release view "$version" *> $null
+            if ($LASTEXITCODE -eq 0) { throw "A release tagged $version already exists but is not the latest." }
+          }
+          $global:LASTEXITCODE = 0
+
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "release=$($release.ToString().ToLower())" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/setup-dotnet@v5
+        if: steps.check.outputs.release == 'true'
+        with:
+          global-json-file: global.json
+
+      - name: Install MAUI workload
+        if: steps.check.outputs.release == 'true'
+        shell: pwsh
+        run: dotnet workload install maui-windows
+
+      - name: Cache NuGet packages
+        if: steps.check.outputs.release == 'true'
+        uses: actions/cache@v4
+        with:
+          path: .nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Build.props', 'Directory.Build.targets', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Build Batterio.exe
+        if: steps.check.outputs.release == 'true'
+        shell: pwsh
+        run: ./eng/Publish-Batterio-self-contained.ps1
+
+      - name: Create release
+        if: steps.check.outputs.release == 'true'
+        shell: pwsh
+        run: |
+          $version = "${{ steps.check.outputs.version }}"
+          gh release create "$version" "publish-self-contained/Batterio.exe" `
+            --target "${{ github.sha }}" `
+            --title "$version" `
+            --generate-notes `
+            --latest
+          if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
