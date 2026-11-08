@@ -6,6 +6,12 @@ public sealed record DeviceDiscoveryState
 
     public bool IsPresent { get; init; }
 
+    /// <summary>
+    /// At least one route reports the device as connected right now. Only devices with routed transports
+    /// (Bluetooth, Logi Bolt) can be online; devices detected by a HID collection alone never are.
+    /// </summary>
+    public bool IsOnline { get; init; }
+
     public string? Error { get; init; }
 
     public string DeviceId => Device.Id;
@@ -34,4 +40,9 @@ public sealed record DeviceDiscoverySnapshot
 public sealed class DeviceDiscoverySnapshotChangedEventArgs(DeviceDiscoverySnapshot snapshot) : EventArgs
 {
     public DeviceDiscoverySnapshot Snapshot { get; } = snapshot;
+}
+
+public sealed class DeviceCameOnlineEventArgs(string deviceId) : EventArgs
+{
+    public string DeviceId { get; } = deviceId;
 }

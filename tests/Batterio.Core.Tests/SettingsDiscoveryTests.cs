@@ -97,7 +97,7 @@ public sealed class SettingsDiscoveryTests
     }
 
     [Fact]
-    public async Task DiscoveryChecksPresenceQueriesInOrderAndStopsAfterTheFirstMatch()
+    public async Task DiscoveryIsPresentWhenAnyPresenceQueryMatchesAndEnumeratesOncePerScan()
     {
         var wiredQuery = Query(0xC0A8);
         var receiverQuery = Query(0xC54D);
@@ -108,7 +108,7 @@ public sealed class SettingsDiscoveryTests
         {
             var snapshot = await discovery.DiscoverAsync();
             Assert.True(Assert.Single(snapshot.Devices).IsPresent);
-            Assert.Equal(new ushort[] { 0xC0A8 }, wiredProvider.EnumeratedProductIds);
+            Assert.False(snapshot.Devices[0].IsOnline); // presence-only devices have no online state
             Assert.Equal(0, wiredProvider.Opens);
         }
 
@@ -116,6 +116,7 @@ public sealed class SettingsDiscoveryTests
         await using var receiverDiscovery = new DeviceDiscoveryService(new[] { definition }, registry, receiverProvider);
         var receiverSnapshot = await receiverDiscovery.DiscoverAsync();
         Assert.True(Assert.Single(receiverSnapshot.Devices).IsPresent);
+        // Both queries are served by one pass (the default combined enumeration runs each distinct query once).
         Assert.Equal(new ushort[] { 0xC0A8, 0xC54D }, receiverProvider.EnumeratedProductIds);
         Assert.Equal(0, receiverProvider.Opens);
     }
@@ -333,6 +334,363 @@ public sealed class SettingsDiscoveryTests
         Assert.True(state.IsOnTaskbar);
     }
 
+    // --- routed devices (Bluetooth and Logi Bolt) ---
+
+    private const string BoltPath = FakeHidpp.ReceiverLongPath;
+    private const string MouseId = "logitech-mx-master-3s";
+    private const string KeyboardId = "logitech-mx-keys-mechanical";
+    private const string KeyboardBluetoothPath = "bt-b366";
+    private const string MouseBluetoothPath = "bt-b034";
+
+    private static DeviceDiscoveryOptions SlowFallback { get; } = new()
+    {
+        FallbackInterval = TimeSpan.FromMinutes(5),
+        EventDebounce = TimeSpan.FromMilliseconds(80)
+    };
+
+    [Fact]
+    public async Task MouseOnlyOnBoltIsPresentAndTheKeyboardIsNotListed()
+    {
+        var hid = new FakeHidpp().Receiver().Add(BoltPath, 2, FakeHidppDevice.MxMaster3s(percentage: 64));
+        var routes = new DeviceRouteTable();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(MxCatalog(), MxRegistry(), hid, null, routes, bolt);
+
+        var snapshot = await discovery.DiscoverAsync();
+
+        var mouse = snapshot.Devices.Single(device => device.DeviceId == MouseId);
+        var keyboard = snapshot.Devices.Single(device => device.DeviceId == KeyboardId);
+        Assert.True(mouse.IsPresent);
+        Assert.True(mouse.IsOnline);
+        Assert.False(keyboard.IsPresent); // a receiver without the keyboard does not make the keyboard present
+        Assert.Null(keyboard.Error);
+        var route = Assert.Single(routes.GetRoutes(MouseId));
+        Assert.Equal(DeviceRouteKind.LogiBolt, route.Kind);
+        Assert.Equal(BoltPath, route.EndpointPath);
+        Assert.Equal((byte?)2, route.Slot);
+        Assert.Equal(RouteState.Online, route.State);
+        Assert.Empty(routes.GetRoutes(KeyboardId));
+        Assert.Equal(1, hid.CombinedEnumerations);
+    }
+
+    [Fact]
+    public async Task MouseOnBoltAndKeyboardOnBluetoothAreBothPresentWithDifferentRoutesAndBothReadable()
+    {
+        var hid = new FakeHidpp().Receiver()
+            .Add(BoltPath, 2, FakeHidppDevice.MxMaster3s(percentage: 64))
+            .Bluetooth(KeyboardBluetoothPath, 0xB366, FakeHidppDevice.MxMechanical(percentage: 30));
+        var monitor = new FakeBluetoothMonitor();
+        monitor.Set(KeyboardBluetoothPath, BluetoothLinkState.Connected);
+        var routes = new DeviceRouteTable();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(MxCatalog(), MxRegistry(), hid, null, routes, bolt, null, monitor);
+
+        var snapshot = await discovery.DiscoverAsync();
+
+        Assert.All(snapshot.Devices, device => Assert.True(device.IsPresent && device.IsOnline));
+        Assert.Equal(DeviceRouteKind.LogiBolt, Assert.Single(routes.GetRoutes(MouseId)).Kind);
+        var keyboardRoute = Assert.Single(routes.GetRoutes(KeyboardId));
+        Assert.Equal(DeviceRouteKind.HidppBluetooth, keyboardRoute.Kind);
+        Assert.Equal(RouteState.Online, keyboardRoute.State);
+
+        var log = new NullBatterioLog();
+        await using var mouse = new LogitechMxMaster3sAdapterFactory(hid, bolt, routes, log)
+            .CreateAdapter(BuiltInDevices.CatalogById[MouseId].CreateConfiguration());
+        await using var keyboard = new LogitechMxKeysMechanicalAdapterFactory(hid, bolt, routes, log)
+            .CreateAdapter(BuiltInDevices.CatalogById[KeyboardId].CreateConfiguration());
+        Assert.Equal(64, (await mouse.GetBatteryStatus()).Percentage);
+        Assert.Equal(30, (await keyboard.GetBatteryStatus()).Percentage);
+    }
+
+    [Fact]
+    public async Task DeviceOnBluetoothAndBoltGetsBothRoutesAndBluetoothIsPreferredWhileOnline()
+    {
+        var hid = new FakeHidpp().Receiver()
+            .Add(BoltPath, 2, FakeHidppDevice.MxMaster3s(percentage: 64))
+            .Bluetooth(MouseBluetoothPath, 0xB034, FakeHidppDevice.MxMaster3s(percentage: 20));
+        var monitor = new FakeBluetoothMonitor();
+        monitor.Set(MouseBluetoothPath, BluetoothLinkState.Connected);
+        var routes = new DeviceRouteTable();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(MxCatalog(), MxRegistry(), hid, null, routes, bolt, null, monitor);
+        await discovery.DiscoverAsync();
+
+        Assert.Equal(2, routes.GetRoutes(MouseId).Count);
+        await using var mouse = new LogitechMxMaster3sAdapterFactory(hid, bolt, routes)
+            .CreateAdapter(BuiltInDevices.CatalogById[MouseId].CreateConfiguration());
+        // Both are online; the Bluetooth route was declared first.
+        Assert.Equal(20, (await mouse.GetBatteryStatus()).Percentage);
+
+        // The mouse is switched away from Bluetooth: only the Bolt route is left online and is read next.
+        monitor.Set(MouseBluetoothPath, BluetoothLinkState.Disconnected);
+        await discovery.DiscoverAsync();
+        Assert.Equal(64, (await mouse.GetBatteryStatus()).Percentage);
+    }
+
+    [Fact]
+    public async Task AFailedEnumerationOfOneQueryDoesNotHideTheOtherDevices()
+    {
+        var hid = new FakeHidpp().Receiver()
+            .Add(BoltPath, 2, FakeHidppDevice.MxMaster3s())
+            .FailEnumeration(query => query.UsagePage == 0xFF43 && query.ProductId == 0xB366);
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(MxCatalog(), MxRegistry(), hid, null, new DeviceRouteTable(), bolt);
+
+        var snapshot = await discovery.DiscoverAsync();
+
+        Assert.True(snapshot.Devices.Single(device => device.DeviceId == MouseId).IsPresent);
+        var keyboard = snapshot.Devices.Single(device => device.DeviceId == KeyboardId);
+        Assert.False(keyboard.IsPresent);
+        Assert.Contains("inspect", keyboard.Error, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task BurstsOfHidDeviceEventsAreDebouncedIntoOneScan()
+    {
+        var hid = new FakeHidpp().Receiver().Add(BoltPath, 2, FakeHidppDevice.MxMaster3s());
+        var notifier = new FakeDeviceChangeNotifier();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(
+            MxCatalog(), MxRegistry(), hid, null, new DeviceRouteTable(), bolt, notifier, null, SlowFallback);
+
+        await discovery.StartAsync();
+        await discovery.RefreshAsync();
+        await Task.Delay(150);
+        Assert.Equal(1, notifier.Starts);
+        Assert.Contains(discovery.CurrentSnapshot.Devices, device => device.IsPresent);
+        var before = hid.CombinedEnumerations;
+
+        for (var index = 0; index < 5; index++) notifier.Raise();
+        await Eventually(() => hid.CombinedEnumerations == before + 1);
+        await Task.Delay(300);
+
+        Assert.Equal(before + 1, hid.CombinedEnumerations);
+    }
+
+    [Fact]
+    public async Task AReceiverThatIsPluggedInAfterStartupIsPickedUpFromTheEvent()
+    {
+        var hid = new FakeHidpp();
+        var notifier = new FakeDeviceChangeNotifier();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(
+            MxCatalog(), MxRegistry(), hid, null, new DeviceRouteTable(), bolt, notifier, null, SlowFallback);
+        await discovery.StartAsync();
+        await discovery.RefreshAsync();
+        Assert.DoesNotContain(discovery.CurrentSnapshot.Devices, device => device.IsPresent);
+
+        hid.Receiver().Add(BoltPath, 2, FakeHidppDevice.MxMaster3s());
+        notifier.Raise();
+
+        await Eventually(() => discovery.CurrentSnapshot.Devices.Single(device => device.DeviceId == MouseId).IsPresent);
+    }
+
+    [Fact]
+    public async Task TheFallbackScanRunsPeriodicallyWithoutAnyEvent()
+    {
+        var hid = new FakeHidpp().Receiver().Add(BoltPath, 2, FakeHidppDevice.MxMaster3s());
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(
+            MxCatalog(), MxRegistry(), hid, null, new DeviceRouteTable(), bolt, null, null,
+            new DeviceDiscoveryOptions { FallbackInterval = TimeSpan.FromMilliseconds(100), EventDebounce = TimeSpan.FromMilliseconds(10) });
+
+        await discovery.StartAsync();
+
+        await Eventually(() => hid.CombinedEnumerations >= 3);
+        Assert.Equal(1, hid.OpenedPaths.Count(path => path == BoltPath)); // the open receiver is kept between scans
+    }
+
+    [Fact]
+    public async Task ABoltDeviceThatWakesUpIsMarkedOnlineWithoutEnumeratingAgain()
+    {
+        var hid = new FakeHidpp().Receiver().Add(BoltPath, 2, FakeHidppDevice.MxMaster3s(), online: false);
+        var routes = new DeviceRouteTable();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(MxCatalog(), MxRegistry(), hid, null, routes, bolt, null, null, SlowFallback);
+        var cameOnline = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        discovery.DeviceCameOnline += (_, e) => cameOnline.Enqueue(e.DeviceId);
+        await discovery.StartAsync();
+        await Eventually(() => discovery.CurrentSnapshot.Devices.Single(device => device.DeviceId == MouseId).IsPresent);
+        var mouse = () => discovery.CurrentSnapshot.Devices.Single(device => device.DeviceId == MouseId);
+        Assert.False(mouse().IsOnline);
+        Assert.Equal(RouteState.Offline, Assert.Single(routes.GetRoutes(MouseId)).State);
+        Assert.Empty(cameOnline);
+        var enumerations = hid.CombinedEnumerations;
+
+        hid.Notify(BoltPath, 2, 0xB034, online: true);
+        await Eventually(() => cameOnline.Count == 1);
+
+        Assert.Equal(new[] { MouseId }, cameOnline.ToArray());
+        Assert.True(mouse().IsOnline);
+        Assert.Equal(RouteState.Online, Assert.Single(routes.GetRoutes(MouseId)).State);
+        Assert.Equal(enumerations, hid.CombinedEnumerations);
+
+        hid.Notify(BoltPath, 2, 0xB034, online: false); // goes back to sleep: present, offline, no event
+        await Eventually(() => !mouse().IsOnline);
+        Assert.True(mouse().IsPresent);
+        Assert.Single(cameOnline);
+    }
+
+    [Fact]
+    public async Task ABluetoothDeviceThatReconnectsIsMarkedOnlineInPlace()
+    {
+        var hid = new FakeHidpp().Bluetooth(MouseBluetoothPath, 0xB034, FakeHidppDevice.MxMaster3s());
+        var monitor = new FakeBluetoothMonitor();
+        monitor.Set(MouseBluetoothPath, BluetoothLinkState.Disconnected);
+        var routes = new DeviceRouteTable();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(MxCatalog(), MxRegistry(), hid, null, routes, bolt, null, monitor, SlowFallback);
+        var cameOnline = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        discovery.DeviceCameOnline += (_, e) => cameOnline.Enqueue(e.DeviceId);
+        await discovery.StartAsync();
+        await Eventually(() => discovery.CurrentSnapshot.Devices.Single(device => device.DeviceId == MouseId).IsPresent);
+        Assert.Equal(RouteState.Offline, Assert.Single(routes.GetRoutes(MouseId)).State);
+        Assert.Equal(1, monitor.Starts);
+        var enumerations = hid.CombinedEnumerations;
+
+        monitor.Set(MouseBluetoothPath, BluetoothLinkState.Connected); // raises StatusChanged
+
+        await Eventually(() => cameOnline.Count == 1);
+        Assert.Equal(RouteState.Online, Assert.Single(routes.GetRoutes(MouseId)).State);
+        Assert.Equal(enumerations, hid.CombinedEnumerations);
+    }
+
+    [Fact]
+    public async Task AnUnknownBluetoothStateCountsAsPresentButNotOnline()
+    {
+        var hid = new FakeHidpp().Bluetooth(MouseBluetoothPath, 0xB034, FakeHidppDevice.MxMaster3s());
+        var routes = new DeviceRouteTable();
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var discovery = new DeviceDiscoveryService(MxCatalog(), MxRegistry(), hid, null, routes, bolt);
+
+        var snapshot = await discovery.DiscoverAsync();
+
+        var mouse = snapshot.Devices.Single(device => device.DeviceId == MouseId);
+        Assert.True(mouse.IsPresent);
+        Assert.False(mouse.IsOnline);
+        Assert.Equal(RouteState.Unknown, Assert.Single(routes.GetRoutes(MouseId)).State);
+    }
+
+    [Fact]
+    public async Task ADeviceThatComesOnlineIsReadImmediatelyWhenItIsSelected()
+    {
+        using var fixture = new TempDirectory();
+        var hid = new FakeHidpp().Receiver().Add(BoltPath, 2, FakeHidppDevice.MxMaster3s(), online: false);
+        var mouseDefinition = BuiltInDevices.CatalogById[MouseId];
+        var reads = 0;
+        var registry = new AdapterRegistry(new[] { new CountingFactory(MouseId, () => Interlocked.Increment(ref reads)) });
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var polling = new PollingCoordinator(registry);
+        await using var discovery = new DeviceDiscoveryService(
+            new[] { mouseDefinition }, registry, hid, null, new DeviceRouteTable(), bolt, null, null, SlowFallback);
+        await using var store = new JsonUserSettingsStore(Path.Combine(fixture.Path, "settings.json"));
+        await using var selection = new DeviceSelectionCoordinator(new[] { mouseDefinition }, store, discovery, polling);
+
+        await selection.StartAsync();
+        await Eventually(() => Volatile.Read(ref reads) == 1); // the first poll when polling starts; the default interval is minutes
+        await Task.Delay(200);
+        Assert.Equal(1, Volatile.Read(ref reads));
+
+        hid.Notify(BoltPath, 2, 0xB034, online: true);
+
+        await Eventually(() => Volatile.Read(ref reads) == 2);
+    }
+
+    [Fact]
+    public async Task ADeviceThatIsNotSelectedIsNotReadWhenItComesOnline()
+    {
+        using var fixture = new TempDirectory();
+        var settingsPath = Path.Combine(fixture.Path, "settings.json");
+        await File.WriteAllTextAsync(settingsPath,
+            $"{{\"version\":1,\"deviceSelections\":{{\"{MouseId}\":false}},\"knownDevices\":[\"{MouseId}\"]}}");
+        var hid = new FakeHidpp().Receiver().Add(BoltPath, 2, FakeHidppDevice.MxMaster3s(), online: false);
+        var mouseDefinition = BuiltInDevices.CatalogById[MouseId];
+        var reads = 0;
+        var registry = new AdapterRegistry(new[] { new CountingFactory(MouseId, () => Interlocked.Increment(ref reads)) });
+        await using var bolt = new LogiBoltReceiverManager(hid, null, LogiBoltReceiverTests.FastOptions);
+        await using var polling = new PollingCoordinator(registry);
+        await using var discovery = new DeviceDiscoveryService(
+            new[] { mouseDefinition }, registry, hid, null, new DeviceRouteTable(), bolt, null, null, SlowFallback);
+        await using var store = new JsonUserSettingsStore(settingsPath);
+        await using var selection = new DeviceSelectionCoordinator(new[] { mouseDefinition }, store, discovery, polling);
+        await selection.StartAsync();
+        Assert.False(Assert.Single(selection.CurrentSnapshot.Devices).IsSelected);
+
+        hid.Notify(BoltPath, 2, 0xB034, online: true);
+        await Eventually(() => discovery.CurrentSnapshot.Devices.Single().IsOnline);
+        await Task.Delay(200);
+
+        Assert.Equal(0, Volatile.Read(ref reads));
+    }
+
+    private static BuiltInDeviceDefinition[] MxCatalog() =>
+        BuiltInDevices.Catalog.Where(device => device.Id is MouseId or KeyboardId).ToArray();
+
+    private static AdapterRegistry MxRegistry() =>
+        new(MxCatalog().Select(device => (IBatteryAdapterFactory)new TestFactory(device.AdapterId)));
+
+    private sealed class FakeDeviceChangeNotifier : IDeviceChangeNotifier
+    {
+        private int _starts;
+
+        public int Starts => Volatile.Read(ref _starts);
+
+        public event EventHandler? Changed;
+
+        public void Start() => Interlocked.Increment(ref _starts);
+
+        public void Raise() => Changed?.Invoke(this, EventArgs.Empty);
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class FakeBluetoothMonitor : IBluetoothConnectionMonitor
+    {
+        private readonly ConcurrentDictionary<string, BluetoothLinkState> _states = new(StringComparer.OrdinalIgnoreCase);
+        private int _starts;
+
+        public int Starts => Volatile.Read(ref _starts);
+
+        public event EventHandler? StatusChanged;
+
+        public void Start() => Interlocked.Increment(ref _starts);
+
+        public BluetoothLinkState GetState(string hidDevicePath) =>
+            _states.TryGetValue(hidDevicePath, out var state) ? state : BluetoothLinkState.Unknown;
+
+        public void Set(string path, BluetoothLinkState state)
+        {
+            _states[path] = state;
+            StatusChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        public void Dispose()
+        {
+        }
+    }
+
+    private sealed class CountingFactory(string adapterId, Action onRead) : IBatteryAdapterFactory
+    {
+        public string AdapterId { get; } = adapterId;
+
+        public void ValidateSettings(JsonElement settings) { }
+
+        public IBatteryAdapter CreateAdapter(DeviceConfiguration device) => new CountingAdapter(onRead);
+    }
+
+    private sealed class CountingAdapter(Action onRead) : IBatteryAdapter
+    {
+        public Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default)
+        {
+            onRead();
+            return Task.FromResult(new BatteryReading(50, BatteryChargeState.NotCharging));
+        }
+
+        public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
     private static BuiltInDeviceDefinition Definition(string id, ushort vendorId) =>
         Definition(id, Query(vendorId));
 
@@ -342,7 +700,7 @@ public sealed class SettingsDiscoveryTests
         Name = id,
         AdapterId = id,
         Kind = DeviceKind.Mouse,
-        PresenceQueries = queries
+        Routes = queries.Select(query => (DeviceRouteDescriptor)new HidPresenceRoute(query)).ToArray()
     };
 
     private static HidCollectionQuery Query(ushort productId) => new()

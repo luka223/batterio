@@ -23,6 +23,21 @@ public static class MauiProgram
         builder.Services.AddSingleton<IProcessTerminator, EnvironmentProcessTerminator>();
         builder.Services.AddSingleton(StartupReadiness.Current ?? StartupReadiness.CaptureFromEnvironment());
         builder.Services.AddSingleton<IHidCollectionProvider, WindowsHidCollectionProvider>();
+        builder.Services.AddSingleton<DeviceRouteTable>();
+        builder.Services.AddSingleton<IDeviceRouteTable>(services => services.GetRequiredService<DeviceRouteTable>());
+        builder.Services.AddSingleton(services => new LogiBoltReceiverManager(
+            services.GetRequiredService<IHidCollectionProvider>(),
+            services.GetRequiredService<IBatterioLog>()));
+        builder.Services.AddSingleton<IDeviceChangeNotifier>(services =>
+        {
+            var log = services.GetRequiredService<IBatterioLog>();
+            return new WindowsDeviceChangeNotifier(message => log.Log(BatterioLogLevel.Warning, message));
+        });
+        builder.Services.AddSingleton<IBluetoothConnectionMonitor>(services =>
+        {
+            var log = services.GetRequiredService<IBatterioLog>();
+            return new WindowsBluetoothConnectionMonitor(message => log.Log(BatterioLogLevel.Warning, message));
+        });
         builder.Services.AddSingleton<IBatteryAdapterFactory, KeychronQ1HeAdapterFactory>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2SuperstrikeAdapterFactory>();
         builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2LightspeedAdapterFactory>();
@@ -37,7 +52,11 @@ public static class MauiProgram
             BuiltInDevices.Catalog,
             services.GetRequiredService<AdapterRegistry>(),
             services.GetRequiredService<IHidCollectionProvider>(),
-            services.GetRequiredService<IBatterioLog>()));
+            services.GetRequiredService<IBatterioLog>(),
+            services.GetRequiredService<DeviceRouteTable>(),
+            services.GetRequiredService<LogiBoltReceiverManager>(),
+            services.GetRequiredService<IDeviceChangeNotifier>(),
+            services.GetRequiredService<IBluetoothConnectionMonitor>()));
         builder.Services.AddSingleton<PollingCoordinator>();
         builder.Services.AddSingleton(WindowsToastActivation.Current);
         builder.Services.AddSingleton<IWindowsToastPlatform, WindowsToastPlatform>();

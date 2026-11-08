@@ -8,7 +8,7 @@ Supported devices:
 - **Logitech G Pro X2 Superstrike**: over USB-C cable or Lightspeed receiver
 - **Logitech G Pro X2 Lightspeed**: through its receiver
 - **SteelSeries Arctis Nova Pro Omni**: headset and reserve battery through the GameHub (hub must be in **USB-1** mode)
-- **Logitech MX Master 3S** and **Logitech MX Keys Mechanical** (*experimental, unverified on hardware*): through their **Logi Bolt** receiver. A sleeping device shows as offline until it wakes.
+- **Logitech MX Master 3S** and **Logitech MX Keys Mechanical**: over **Bluetooth** (verified on hardware) or through their **Logi Bolt** receiver (*experimental, unverified on hardware*). Each device is handled on its own, so the mouse can be on Bolt and the keyboard on Bluetooth, and a device you do not own is not listed. A sleeping device, or one switched to another Easy-Switch channel, shows as offline, and is read again within moments of waking up or being switched back.
 
 Left-click the tray icon to open the popup, right-click it for the menu (Settings, Close). Batterio sends a Windows notification once per run when a device drops below 30% and when it is fully charged.
 

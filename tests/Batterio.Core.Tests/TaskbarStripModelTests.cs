@@ -171,7 +171,7 @@ public sealed class TaskbarStripModelTests
             Name = id,
             AdapterId = id,
             Kind = kind,
-            PresenceQueries = []
+            Routes = []
         },
         IsPresent = present,
         IsSelected = selected,

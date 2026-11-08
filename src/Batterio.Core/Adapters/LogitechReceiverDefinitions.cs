@@ -12,7 +12,12 @@ public sealed record BuiltInDeviceDefinition
 
     public required DeviceKind Kind { get; init; }
 
-    public required IReadOnlyList<HidCollectionQuery> PresenceQueries { get; init; }
+    /// <summary>The transports through which the device can be reached; its presence is the presence of any resolved route.</summary>
+    public required IReadOnlyList<DeviceRouteDescriptor> Routes { get; init; }
+
+    /// <summary>The HID collections whose existence alone proves the device is present (its <see cref="HidPresenceRoute"/>s).</summary>
+    public IReadOnlyList<HidCollectionQuery> PresenceQueries =>
+        Routes.OfType<HidPresenceRoute>().Select(route => route.Query).ToArray();
 
     /// <summary>The device reports a second (reserve) battery that is shown beneath the primary one.</summary>
     public bool HasReserveBattery { get; init; }
@@ -51,14 +56,33 @@ public static class LogitechReceiverDefinitions
         RequiredReportId = 0x11
     };
 
+    public const ushort LogitechVendorId = 0x046D;
+
+    /// <summary>Logi Bolt receiver, HID++ on USB interface 2 (Solaar <c>base_usb.py</c>, <c>_bolt_receiver</c>).</summary>
+    public const ushort BoltReceiverProductId = 0xC548;
+
+    public const ushort BoltReceiverInterfaceNumber = 2;
+
+    /// <summary>The Bolt receiver's long-report (0x11) HID++ collection.</summary>
     public static readonly HidCollectionQuery BoltReceiverQuery = new()
     {
-        VendorId = LogitechBoltAdapter.VendorId,
-        ProductId = LogitechBoltAdapter.ReceiverProductId,
-        InterfaceNumber = LogitechBoltAdapter.InterfaceNumber,
+        VendorId = LogitechVendorId,
+        ProductId = BoltReceiverProductId,
+        InterfaceNumber = BoltReceiverInterfaceNumber,
         UsagePage = 0xFF00,
         MinimumReportLength = 20,
         RequiredReportId = 0x11
+    };
+
+    /// <summary>The Bolt receiver's short-report (0x10) HID++ collection, where it sends HID++ 1.0 error replies.</summary>
+    public static readonly HidCollectionQuery BoltReceiverShortQuery = new()
+    {
+        VendorId = LogitechVendorId,
+        ProductId = BoltReceiverProductId,
+        InterfaceNumber = BoltReceiverInterfaceNumber,
+        UsagePage = 0xFF00,
+        MinimumReportLength = 7,
+        RequiredReportId = 0x10
     };
 
     public static readonly HidCollectionQuery LightspeedQuery = new()

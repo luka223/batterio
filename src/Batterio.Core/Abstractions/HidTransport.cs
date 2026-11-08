@@ -60,6 +60,23 @@ public interface IHidCollectionProvider
 {
     IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query);
 
+    /// <summary>
+    /// Enumerates the collections that may match any of <paramref name="queries"/> in one pass.
+    /// The result is de-duplicated by device path; callers still apply <see cref="HidCollectionQuery.Matches"/> per query.
+    /// The default implementation runs the single-query enumeration once per distinct query.
+    /// </summary>
+    IReadOnlyList<HidCollectionInfo> Enumerate(IReadOnlyCollection<HidCollectionQuery> queries)
+    {
+        ArgumentNullException.ThrowIfNull(queries);
+        var found = new List<HidCollectionInfo>();
+        foreach (var query in queries.Distinct())
+        {
+            found.AddRange(Enumerate(query) ?? Array.Empty<HidCollectionInfo>());
+        }
+
+        return found.DistinctBy(collection => collection.DevicePath, StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+
     ValueTask<IHidReportTransport> OpenAsync(HidCollectionInfo collection, CancellationToken cancellationToken = default);
 }
 
