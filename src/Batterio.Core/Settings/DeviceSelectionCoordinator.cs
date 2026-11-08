@@ -37,6 +37,7 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         _discoverySnapshot = _discovery.CurrentSnapshot;
         _snapshot = CreateSnapshot(isLoading: true);
         _discovery.SnapshotChanged += OnDiscoverySnapshotChanged;
+        _discovery.DeviceCameOnline += OnDeviceCameOnline;
     }
 
     public DeviceSelectionSnapshot CurrentSnapshot
@@ -168,6 +169,7 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         if (Interlocked.Exchange(ref _disposed, 1) == 0)
         {
             _discovery.SnapshotChanged -= OnDiscoverySnapshotChanged;
+            _discovery.DeviceCameOnline -= OnDeviceCameOnline;
             await StopAsync().ConfigureAwait(false);
             _gate.Dispose();
         }
@@ -176,6 +178,47 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
     private void OnDiscoverySnapshotChanged(object? sender, DeviceDiscoverySnapshotChangedEventArgs args)
     {
         _ = ApplyDiscoverySnapshotAsync(args.Snapshot);
+    }
+
+    private void OnDeviceCameOnline(object? sender, DeviceCameOnlineEventArgs args)
+    {
+        _ = ReadDeviceThatCameOnlineAsync(args.DeviceId);
+    }
+
+    /// <summary>
+    /// A device woke up or was switched back to this computer: read it now rather than at its next poll,
+    /// which may be minutes away. Uses the normal refresh path, so nothing downstream changes.
+    /// </summary>
+    private async Task ReadDeviceThatCameOnlineAsync(string deviceId)
+    {
+        try
+        {
+            // Wait for the discovery snapshot that announced the device to be applied first: that is what starts its polling.
+            await _gate.WaitAsync().ConfigureAwait(false);
+            bool selected;
+            try
+            {
+                selected = _started && !_stopped && _settings.IsDeviceSelected(deviceId) &&
+                           _discoverySnapshot.PresentDeviceIds.Contains(deviceId);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
+            if (selected)
+            {
+                await _polling.RefreshDeviceAsync(deviceId).ConfigureAwait(false);
+            }
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or OperationCanceledException)
+        {
+            // Shutting down.
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Warning, $"Reading device '{deviceId}' after it came online failed.", exception);
+        }
     }
 
     private async Task ApplyDiscoverySnapshotAsync(DeviceDiscoverySnapshot discoverySnapshot)

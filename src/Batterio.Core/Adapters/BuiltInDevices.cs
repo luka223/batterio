@@ -11,7 +11,7 @@ public static class BuiltInDevices
             Name = "Keychron Q1 HE",
             AdapterId = "keychron-q1-he",
             Kind = DeviceKind.Keyboard,
-            PresenceQueries = [KeychronDefinitions.LinkRawHidQuery]
+            Routes = [new HidPresenceRoute(KeychronDefinitions.LinkRawHidQuery)]
         },
         new BuiltInDeviceDefinition
         {
@@ -19,10 +19,10 @@ public static class BuiltInDevices
             Name = "Logitech G Pro X2 Superstrike",
             AdapterId = "logitech-g-pro-x2-superstrike",
             Kind = DeviceKind.Mouse,
-            PresenceQueries =
+            Routes =
             [
-                LogitechReceiverDefinitions.SuperstrikeWiredQuery,
-                LogitechReceiverDefinitions.SuperstrikeReceiverQuery
+                new HidPresenceRoute(LogitechReceiverDefinitions.SuperstrikeWiredQuery),
+                new HidPresenceRoute(LogitechReceiverDefinitions.SuperstrikeReceiverQuery)
             ]
         },
         new BuiltInDeviceDefinition
@@ -31,7 +31,7 @@ public static class BuiltInDevices
             Name = "Logitech G Pro X2 Lightspeed",
             AdapterId = "logitech-g-pro-x2-lightspeed",
             Kind = DeviceKind.Mouse,
-            PresenceQueries = [LogitechReceiverDefinitions.LightspeedQuery]
+            Routes = [new HidPresenceRoute(LogitechReceiverDefinitions.LightspeedQuery)]
         },
         new BuiltInDeviceDefinition
         {
@@ -40,23 +40,23 @@ public static class BuiltInDevices
             AdapterId = "steelseries-arctis-nova-pro-omni",
             Kind = DeviceKind.Headset,
             HasReserveBattery = true,
-            PresenceQueries = [SteelSeriesDefinitions.NovaProOmniQuery]
+            Routes = [new HidPresenceRoute(SteelSeriesDefinitions.NovaProOmniQuery)]
         },
         new BuiltInDeviceDefinition
         {
-            Id = "logitech-mx-master-3s",
+            Id = LogitechMxMaster3s.AdapterId,
             Name = "Logitech MX Master 3S",
-            AdapterId = "logitech-mx-master-3s",
+            AdapterId = LogitechMxMaster3s.AdapterId,
             Kind = DeviceKind.Mouse,
-            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery, .. LogitechBoltDeviceProfile.MxMaster3s.BluetoothQueries]
+            Routes = LogitechMxMaster3s.Routes
         },
         new BuiltInDeviceDefinition
         {
-            Id = "logitech-mx-keys-mechanical",
+            Id = LogitechMxKeysMechanical.AdapterId,
             Name = "Logitech MX Keys Mechanical",
-            AdapterId = "logitech-mx-keys-mechanical",
+            AdapterId = LogitechMxKeysMechanical.AdapterId,
             Kind = DeviceKind.Keyboard,
-            PresenceQueries = [LogitechReceiverDefinitions.BoltReceiverQuery, .. LogitechBoltDeviceProfile.MxKeysMechanical.BluetoothQueries]
+            Routes = LogitechMxKeysMechanical.Routes
         }
     ];
 

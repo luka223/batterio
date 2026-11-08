@@ -21,6 +21,9 @@ public sealed class BatteryApplication : IAsyncDisposable
     private readonly RuntimeStartupSequence _startup;
     private readonly UpdateCoordinator _updates;
     private readonly WindowsUpdateNotifier _updateNotifier;
+    private readonly IDeviceChangeNotifier _deviceChanges;
+    private readonly IBluetoothConnectionMonitor _bluetooth;
+    private readonly LogiBoltReceiverManager _boltReceivers;
     private IProcessTerminator _processTerminator = new EnvironmentProcessTerminator();
     private BoundedCleanupProcessExit _boundedExit;
     private bool _isExiting;
@@ -39,9 +42,15 @@ public sealed class BatteryApplication : IAsyncDisposable
         IStartupRegistrationService startupRegistration,
         UpdateCoordinator updates,
         WindowsUpdateNotifier updateNotifier,
+        IDeviceChangeNotifier deviceChanges,
+        IBluetoothConnectionMonitor bluetooth,
+        LogiBoltReceiverManager boltReceivers,
         IBatterioLog log,
         ILogger<BatteryApplication> logger)
     {
+        _deviceChanges = deviceChanges;
+        _bluetooth = bluetooth;
+        _boltReceivers = boltReceivers;
         _polling = polling;
         _selection = selection;
         _batteryNotifications = batteryNotifications;
@@ -190,8 +199,13 @@ public sealed class BatteryApplication : IAsyncDisposable
     private async Task CleanupAsync()
     {
         await _selection.StopAsync().ConfigureAwait(false);
+        // Event sources go first: nothing should trigger a scan or a read while polling is winding down.
+        _deviceChanges.Dispose();
+        _bluetooth.Dispose();
         await _batteryNotifications.StopAsync().ConfigureAwait(false);
         await _polling.StopAsync(TimeSpan.FromMilliseconds(750)).ConfigureAwait(false);
+        // The receivers are used by the polling workers, so they are released once those have stopped.
+        await _boltReceivers.DisposeAsync().ConfigureAwait(false);
         await _strip.StopAsync().ConfigureAwait(false);
         await _tray.StopAsync().ConfigureAwait(false);
         await _windows.CloseAsync().ConfigureAwait(false);
@@ -209,6 +223,9 @@ public sealed class BatteryApplication : IAsyncDisposable
         await _batteryNotifications.DisposeAsync().ConfigureAwait(false);
         await _selection.DisposeAsync().ConfigureAwait(false);
         await _polling.DisposeAsync().ConfigureAwait(false);
+        _deviceChanges.Dispose();
+        _bluetooth.Dispose();
+        await _boltReceivers.DisposeAsync().ConfigureAwait(false);
         await _strip.DisposeAsync().ConfigureAwait(false);
         await _tray.DisposeAsync().ConfigureAwait(false);
     }

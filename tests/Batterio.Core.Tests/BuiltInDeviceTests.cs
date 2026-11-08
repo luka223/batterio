@@ -112,21 +112,22 @@ public sealed class BuiltInDeviceTests
     }
 
     [Fact]
-    public void MxDevicesShareTheBoltReceiverPresenceQuery()
+    public void MxDevicesDeclareTheirOwnBluetoothAndBoltRoutes()
     {
-        foreach (var (id, bluetoothProductId) in new[] { ("logitech-mx-master-3s", (ushort)0xB034), ("logitech-mx-keys-mechanical", (ushort)0xB366) })
+        foreach (var (id, productId) in new[] { ("logitech-mx-master-3s", (ushort)0xB034), ("logitech-mx-keys-mechanical", (ushort)0xB366) })
         {
             var device = BuiltInDevices.Catalog.Single(entry => entry.Id == id);
-            Assert.Equal(2, device.PresenceQueries.Count);
-            Assert.Same(LogitechReceiverDefinitions.BoltReceiverQuery, device.PresenceQueries[0]);
-            var bluetooth = device.PresenceQueries[1];
-            Assert.Equal((ushort)0x046D, bluetooth.VendorId);
-            Assert.Equal(bluetoothProductId, bluetooth.ProductId);
-            Assert.Null(bluetooth.InterfaceNumber);
-            Assert.Equal((ushort)0xFF43, bluetooth.UsagePage);
-            Assert.Equal((ushort)0x0202, bluetooth.Usage);
-            Assert.Equal((byte)0x11, bluetooth.RequiredReportId);
+            Assert.Equal(2, device.Routes.Count);
+            Assert.Equal(new HidppBluetoothRouteDescriptor(productId), device.Routes[0]);
+            var bolt = Assert.IsType<LogiBoltRouteDescriptor>(device.Routes[1]);
+            Assert.Equal(productId, bolt.WirelessProductId);
+            Assert.NotEmpty(bolt.Names!);
+            // Presence is decided by routes, not by a HID collection alone: a receiver without the device does not make it present.
+            Assert.Empty(device.PresenceQueries);
         }
+
+        Assert.Equal("logitech-mx-master-3s", LogitechMxMaster3s.Profile.AdapterId);
+        Assert.Equal("logitech-mx-keys-mechanical", LogitechMxKeysMechanical.Profile.AdapterId);
 
         var query = LogitechReceiverDefinitions.BoltReceiverQuery;
         Assert.Equal((ushort)0x046D, query.VendorId);
@@ -167,8 +168,12 @@ public sealed class BuiltInDeviceTests
         await using var superstrike = new LogitechGProX2SuperstrikeAdapter();
         await using var lightspeed = new LogitechGProX2LightspeedAdapter();
         await using var omni = new SteelSeriesArctisNovaProOmniAdapter();
-        await using var mxMaster = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxMaster3s);
-        await using var mxKeys = new LogitechBoltAdapter(LogitechBoltDeviceProfile.MxKeysMechanical);
+        await using var receivers = new LogiBoltReceiverManager(new EmptyHidCollectionProvider());
+        var routes = new DeviceRouteTable();
+        await using var mxMaster = LogitechRoutedAdapters.Create(
+            LogitechMxMaster3s.Profile, new EmptyHidCollectionProvider(), receivers, routes, new NullBatterioLog(), null);
+        await using var mxKeys = LogitechRoutedAdapters.Create(
+            LogitechMxKeysMechanical.Profile, new EmptyHidCollectionProvider(), receivers, routes, new NullBatterioLog(), null);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => keychron.GetBatteryStatus(cancellation.Token));

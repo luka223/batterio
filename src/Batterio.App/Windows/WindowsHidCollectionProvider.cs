@@ -18,12 +18,31 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
     private const uint FileFlagOverlapped = 0x40000000;
     private const int HidpStatusSuccess = 0x00110000;
     private static readonly Regex VendorProductRegex = new(@"VID_([0-9A-F]{4})&PID_([0-9A-F]{4})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
-    // Bluetooth LE HID paths encode the vendor ID with a source prefix (01 = Bluetooth SIG, 02 = USB-IF): VID&02046D_PID&B034.
-    private static readonly Regex BluetoothVendorProductRegex = new(@"VID&0[12]([0-9A-F]{4})_PID&([0-9A-F]{4})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    // Bluetooth LE HID paths encode the vendor ID with a source prefix: VID&02046D_PID&B034. Only source 02 (USB-IF vendor ID)
+    // is accepted: with source 01 the digits are a Bluetooth SIG company ID, which is not comparable to a USB vendor ID.
+    private static readonly Regex BluetoothVendorProductRegex = new(@"VID&02([0-9A-F]{4})_PID&([0-9A-F]{4})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex InterfaceRegex = new(@"&MI_([0-9A-F]{2})", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
-    public IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query)
+    public IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query) => EnumerateCore(new[] { query });
+
+    /// <summary>One SetupDi pass; only interfaces whose VID/PID/interface can match a query are opened and inspected.</summary>
+    public IReadOnlyList<HidCollectionInfo> Enumerate(IReadOnlyCollection<HidCollectionQuery> queries)
     {
+        ArgumentNullException.ThrowIfNull(queries);
+        return EnumerateCore(queries.Distinct().ToArray());
+    }
+
+    private static bool IdentityMayMatch(HidCollectionQuery query, (ushort VendorId, ushort ProductId, ushort? InterfaceNumber) identity) =>
+        identity.VendorId == query.VendorId && identity.ProductId == query.ProductId &&
+        (!query.InterfaceNumber.HasValue || identity.InterfaceNumber == query.InterfaceNumber);
+
+    private static IReadOnlyList<HidCollectionInfo> EnumerateCore(IReadOnlyCollection<HidCollectionQuery> queries)
+    {
+        if (queries.Count == 0)
+        {
+            return Array.Empty<HidCollectionInfo>();
+        }
+
         HidNativeMethods.HidD_GetHidGuid(out var hidGuid);
         var infoSet = HidNativeMethods.SetupDiGetClassDevs(ref hidGuid, null, nint.Zero, DigcfPresent | DigcfDeviceInterface);
         if (infoSet == HidNativeMethods.InvalidHandleValue)
@@ -35,7 +54,7 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
         try
         {
             var collections = new List<HidCollectionInfo>();
-            var inaccessible = new List<string>();
+            var inaccessible = new List<(ushort VendorId, ushort ProductId, string Description)>();
             for (uint index = 0; ; index++)
             {
                 var interfaceData = new HidNativeMethods.DeviceInterfaceData
@@ -60,8 +79,7 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
                 }
 
                 var identity = ParseIdentity(path);
-                if (identity is null || identity.Value.VendorId != query.VendorId || identity.Value.ProductId != query.ProductId ||
-                    (query.InterfaceNumber.HasValue && identity.Value.InterfaceNumber != query.InterfaceNumber))
+                if (identity is null || !queries.Any(query => IdentityMayMatch(query, identity.Value)))
                 {
                     continue;
                 }
@@ -73,12 +91,13 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
                         nint.Zero, OpenExisting, 0, nint.Zero);
                     if (handle.IsInvalid)
                     {
-                        inaccessible.Add($"{path} (CreateFile error {Marshal.GetLastWin32Error()})");
+                        inaccessible.Add((identity.Value.VendorId, identity.Value.ProductId,
+                            $"{path} (CreateFile error {Marshal.GetLastWin32Error()})"));
                         continue;
                     }
                     if (!TryGetCaps(handle, out var caps, out var reportIds, out var detailError))
                     {
-                        inaccessible.Add($"{path} ({detailError})");
+                        inaccessible.Add((identity.Value.VendorId, identity.Value.ProductId, $"{path} ({detailError})"));
                         continue;
                     }
 
@@ -96,7 +115,7 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
                         SupportedReportIds = reportIds
                     };
 
-                    if (query.Matches(collection))
+                    if (queries.Any(query => query.Matches(collection)))
                     {
                         collections.Add(collection);
                     }
@@ -111,9 +130,14 @@ public sealed class WindowsHidCollectionProvider : IHidCollectionProvider
                 }
             }
 
-            if (collections.Count == 0 && inaccessible.Count > 0)
+            // A collection whose descriptors cannot be inspected is only an error when nothing else of the same product was
+            // found; callers then attribute the failure to the queries involved (see DeviceDiscoveryService).
+            var unexplained = inaccessible
+                .Where(entry => !collections.Any(found => found.VendorId == entry.VendorId && found.ProductId == entry.ProductId))
+                .ToArray();
+            if (unexplained.Length > 0)
                 throw new BatteryAdapterException(BatteryAdapterErrorKind.AccessFailure,
-                    $"Could not inspect HID descriptors for: {string.Join(", ", inaccessible)}.");
+                    $"Could not inspect HID descriptors for: {string.Join(", ", unexplained.Select(entry => entry.Description))}.");
             return collections;
         }
         finally

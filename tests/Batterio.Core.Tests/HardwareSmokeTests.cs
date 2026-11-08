@@ -157,10 +157,7 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     [HardwareFact]
     public async Task MxMaster3sCanBeQueried()
     {
-        await using var adapter = new LogitechBoltAdapter(
-            LogitechBoltDeviceProfile.MxMaster3s, new WindowsHidCollectionProvider(), new TestLog(output));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var reading = await adapter.GetBatteryStatus(timeout.Token);
+        var reading = await ReadMxAsync(LogitechMxMaster3s.AdapterId);
         output.WriteLine($"MX Master 3S: {reading.Percentage}% ({reading.ChargeState})");
         Assert.NotEqual(BatteryChargeState.Offline, reading.ChargeState);
     }
@@ -168,16 +165,44 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     [HardwareFact]
     public async Task MxKeysMechanicalCanBeQueried()
     {
-        await using var adapter = new LogitechBoltAdapter(
-            LogitechBoltDeviceProfile.MxKeysMechanical, new WindowsHidCollectionProvider(), new TestLog(output));
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
-        var reading = await adapter.GetBatteryStatus(timeout.Token);
+        var reading = await ReadMxAsync(LogitechMxKeysMechanical.AdapterId);
         output.WriteLine($"MX Keys Mechanical: {reading.Percentage}% ({reading.ChargeState})");
         Assert.NotEqual(BatteryChargeState.Offline, reading.ChargeState);
     }
 
+    // Runs discovery for the MX devices exactly as the app does, then reads the device through its resolved routes.
+    private async Task<BatteryReading> ReadMxAsync(string deviceId)
+    {
+        var log = new TestLog(output);
+        var provider = new WindowsHidCollectionProvider();
+        var routes = new DeviceRouteTable();
+        await using var receivers = new LogiBoltReceiverManager(provider, log);
+        var factories = new IBatteryAdapterFactory[]
+        {
+            new LogitechMxMaster3sAdapterFactory(provider, receivers, routes, log),
+            new LogitechMxKeysMechanicalAdapterFactory(provider, receivers, routes, log)
+        };
+        var catalog = BuiltInDevices.Catalog.Where(device => factories.Any(factory => factory.AdapterId == device.AdapterId)).ToArray();
+        await using var discovery = new DeviceDiscoveryService(
+            catalog, new AdapterRegistry(factories), provider, log, routes, receivers);
+        var snapshot = await discovery.DiscoverAsync();
+        foreach (var route in routes.GetRoutes(deviceId))
+        {
+            output.WriteLine($"route {route.Kind} '{route.EndpointPath}' slot {route.Slot} {route.State}");
+        }
+
+        Assert.True(snapshot.Devices.Single(device => device.DeviceId == deviceId).IsPresent, $"{deviceId} was not found.");
+        var adapter = factories.Single(factory => factory.AdapterId == deviceId)
+            .CreateAdapter(BuiltInDevices.CatalogById[deviceId].CreateConfiguration());
+        await using (adapter)
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            return await adapter.GetBatteryStatus(timeout.Token);
+        }
+    }
+
     // Reverse-engineering aid: dumps what every paired Logi Bolt slot reports so the model IDs and names in
-    // LogitechBoltDeviceProfile can be confirmed or corrected. Send the output (and batterio.log) to the maintainers.
+    // the MX device profiles can be confirmed or corrected. Send the output (and batterio.log) to the maintainers.
     [HardwareFact]
     public async Task BoltReceiverSlotsAreListed()
     {
