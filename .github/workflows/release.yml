@@ -26,6 +26,8 @@ jobs:
       DOTNET_CLI_TELEMETRY_OPTOUT: "true"
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history and tags, needed for the release notes
 
       - name: Decide whether to release
         id: check
@@ -52,6 +54,7 @@ jobs:
           $global:LASTEXITCODE = 0
 
           "version=$version" >> $env:GITHUB_OUTPUT
+          "previous=$($latestTag.Trim())" >> $env:GITHUB_OUTPUT
           "release=$($release.ToString().ToLower())" >> $env:GITHUB_OUTPUT
 
       - uses: actions/setup-dotnet@v5
@@ -77,6 +80,18 @@ jobs:
         shell: pwsh
         run: ./eng/Publish-Batterio-self-contained.ps1
 
+      # One line per change on main since the previous release, oldest first:
+      #   direct commit          -> "- <subject> (<short sha>)"
+      #   squash-merged PR       -> "- <PR title> (#N)"   (GitHub already puts "(#N)" in the subject)
+      #   merge-commit PR        -> "- <PR title> (#N)"   (title taken from the merge commit body)
+      #   rebase-merged PR       -> each rebased commit as a direct commit
+      # Only first-parent history is walked, so commits inside a merged PR branch are not repeated,
+      # and local "Merge branch ..." commits are skipped.
+      - name: Write release notes
+        if: steps.check.outputs.release == 'true'
+        shell: pwsh
+        run: ./eng/Write-ReleaseNotes.ps1 -PreviousTag "${{ steps.check.outputs.previous }}" -Version "${{ steps.check.outputs.version }}" -Repository "${{ github.repository }}" -OutputPath "$env:RUNNER_TEMP/release-notes.md"
+
       - name: Create release
         if: steps.check.outputs.release == 'true'
         shell: pwsh
@@ -85,6 +100,6 @@ jobs:
           gh release create "$version" "publish-self-contained/Batterio.exe" `
             --target "${{ github.sha }}" `
             --title "$version" `
-            --generate-notes `
+            --notes-file "$env:RUNNER_TEMP/release-notes.md" `
             --latest
           if ($LASTEXITCODE -ne 0) { throw "gh release create failed with exit code $LASTEXITCODE." }
