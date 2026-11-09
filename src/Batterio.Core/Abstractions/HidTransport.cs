@@ -105,7 +105,6 @@ public sealed class EmptyHidCollectionProvider : IHidCollectionProvider
 public enum BatteryAdapterErrorKind
 {
     ReceiverMissing,
-    ReceiverAmbiguous,
     AccessFailure,
     DeviceOffline,
     DeviceBusy,

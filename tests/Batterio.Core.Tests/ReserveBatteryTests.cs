@@ -63,11 +63,11 @@ public sealed class ReserveBatteryTests
 
         Assert.Equal("SteelSeries Arctis Nova Pro Omni", omni.Name);
         Assert.True(omni.HasReserveBattery);
-        Assert.Same(SteelSeriesDefinitions.NovaProOmniQuery, Assert.Single(omni.PresenceQueries));
+        Assert.Same(SteelSeriesArctisNovaProOmni.NovaProOmniQuery, Assert.IsType<UsbHidRouteDescriptor>(Assert.Single(omni.Routes)).Query);
         Assert.True(omni.CreateConfiguration().HasReserveBattery);
         Assert.All(BuiltInDevices.Catalog.Where(device => device.Id != omni.Id), device => Assert.False(device.HasReserveBattery));
 
-        var query = SteelSeriesDefinitions.NovaProOmniQuery;
+        var query = SteelSeriesArctisNovaProOmni.NovaProOmniQuery;
         Assert.Equal((ushort)0x1038, query.VendorId);
         Assert.Equal((ushort)0x2290, query.ProductId);
         Assert.Equal((ushort)3, query.InterfaceNumber);
@@ -82,12 +82,12 @@ public sealed class ReserveBatteryTests
     {
         var registry = new AdapterRegistry(
         [
-            new KeychronQ1HeAdapterFactory(),
-            new LogitechGProX2SuperstrikeAdapterFactory(),
-            new LogitechGProX2LightspeedAdapterFactory(),
-            new SteelSeriesArctisNovaProOmniAdapterFactory(),
-            new LogitechMxMaster3sAdapterFactory(),
-            new LogitechMxKeysMechanicalAdapterFactory()
+            new RoutedAdapterFactory(KeychronQ1He.Profile),
+            new RoutedAdapterFactory(LogitechGProX2Superstrike.Profile),
+            new RoutedAdapterFactory(LogitechGProX2Lightspeed.Profile),
+            new RoutedAdapterFactory(SteelSeriesArctisNovaProOmni.Profile),
+            new RoutedAdapterFactory(LogitechMxMaster3s.Profile),
+            new RoutedAdapterFactory(LogitechMxKeysMechanical.Profile)
         ]);
 
         Assert.All(BuiltInDevices.Catalog, device => Assert.True(registry.TryGetFactory(device.AdapterId, out _), device.AdapterId));

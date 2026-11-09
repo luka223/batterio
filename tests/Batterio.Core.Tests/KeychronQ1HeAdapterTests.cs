@@ -19,7 +19,7 @@ public sealed class KeychronQ1HeAdapterTests
         provider.Frames.Add(new byte[33]);
         provider.Frames.Add(KeychronBatteryReportDecodingTests.Frame(model: 1));
         provider.Frames.Add(KeychronBatteryReportDecodingTests.Frame(72));
-        await using var adapter = new KeychronQ1HeAdapter(provider);
+        await using var adapter = RouteHarness.Keychron(provider);
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -32,7 +32,7 @@ public sealed class KeychronQ1HeAdapterTests
     {
         var provider = new LinkProvider(Collection(Path1));
         var time = new ManualTimeProvider(new DateTimeOffset(2026, 11, 4, 16, 20, 0, TimeSpan.Zero));
-        await using var adapter = new KeychronQ1HeAdapter(provider, timeProvider: time);
+        await using var adapter = RouteHarness.Keychron(provider, timeProvider: time);
 
         async Task<BatteryReading> Poll(byte charge, ushort millivolts, byte firmware = 50)
         {
@@ -72,7 +72,7 @@ public sealed class KeychronQ1HeAdapterTests
         {
             Frames = { KeychronBatteryReportDecodingTests.Frame(87, charge: 1, millivolts: 4003) }
         };
-        await using var adapter = new KeychronQ1HeAdapter(provider);
+        await using var adapter = RouteHarness.Keychron(provider);
 
         Assert.Equal(new BatteryReading(60, BatteryChargeState.Charging), await adapter.GetBatteryStatus());
     }
@@ -80,7 +80,7 @@ public sealed class KeychronQ1HeAdapterTests
     [Fact]
     public async Task SilenceIsReportedAsDeviceOffline()
     {
-        await using var adapter = new KeychronQ1HeAdapter(new LinkProvider(Collection(Path1)), listenTimeout: ShortTimeout);
+        await using var adapter = RouteHarness.Keychron(new LinkProvider(Collection(Path1)), listenTimeout: ShortTimeout);
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -91,12 +91,12 @@ public sealed class KeychronQ1HeAdapterTests
     public async Task AFloodOfUnrelatedFramesIsAProtocolError()
     {
         var provider = new LinkProvider(Collection(Path1));
-        for (var index = 0; index < KeychronQ1HeAdapter.MaximumFramesPerQuery + 5; index++)
+        for (var index = 0; index < KeychronLinkRoute.MaximumFramesPerQuery + 5; index++)
         {
             provider.Frames.Add(new byte[33]);
         }
 
-        await using var adapter = new KeychronQ1HeAdapter(provider);
+        await using var adapter = RouteHarness.Keychron(provider);
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -106,7 +106,7 @@ public sealed class KeychronQ1HeAdapterTests
     [Fact]
     public async Task MissingDongleIsReportedAsReceiverMissing()
     {
-        await using var adapter = new KeychronQ1HeAdapter(new LinkProvider());
+        await using var adapter = RouteHarness.Keychron(new LinkProvider());
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -114,13 +114,20 @@ public sealed class KeychronQ1HeAdapterTests
     }
 
     [Fact]
-    public async Task TwoDonglesWithoutADevicePathAreAmbiguous()
+    public async Task TwoDonglesWithoutADevicePathReadTheFirstThatAnswersAndRememberIt()
     {
-        await using var adapter = new KeychronQ1HeAdapter(new LinkProvider(Collection(Path1), Collection(Path2)));
+        var provider = new LinkProvider(Collection(Path1), Collection(Path2))
+        {
+            FramesByPath = { [Path1] = new List<byte[]>(), [Path2] = new List<byte[]> { KeychronBatteryReportDecodingTests.Frame(33) } }
+        };
+        await using var adapter = RouteHarness.Keychron(provider, listenTimeout: ShortTimeout);
 
-        var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
+        Assert.Equal(33, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal(new[] { Path1, Path2 }, provider.Opened);
 
-        Assert.Equal(BatteryAdapterErrorKind.ReceiverAmbiguous, error.Kind);
+        // The dongle that answered is asked first next time.
+        Assert.Equal(33, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal(new[] { Path1, Path2, Path2 }, provider.Opened);
     }
 
     [Fact]
@@ -130,7 +137,7 @@ public sealed class KeychronQ1HeAdapterTests
         {
             Frames = { KeychronBatteryReportDecodingTests.Frame(33) }
         };
-        await using var adapter = new KeychronQ1HeAdapter(provider, devicePath: Path2.ToUpperInvariant());
+        await using var adapter = RouteHarness.Keychron(provider, devicePath: Path2.ToUpperInvariant());
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -142,7 +149,7 @@ public sealed class KeychronQ1HeAdapterTests
     public async Task CancellationIsHonoredInsteadOfBecomingOffline()
     {
         var provider = new LinkProvider(Collection(Path1));
-        await using var adapter = new KeychronQ1HeAdapter(provider, listenTimeout: TimeSpan.FromSeconds(30));
+        await using var adapter = RouteHarness.Keychron(provider, listenTimeout: TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetBatteryStatus(cancellation.Token));
@@ -155,7 +162,7 @@ public sealed class KeychronQ1HeAdapterTests
     [Fact]
     public async Task UseAfterDisposeThrows()
     {
-        var adapter = new KeychronQ1HeAdapter(new LinkProvider(Collection(Path1)));
+        var adapter = RouteHarness.Keychron(new LinkProvider(Collection(Path1)));
         await adapter.DisposeAsync();
 
         await Assert.ThrowsAsync<ObjectDisposedException>(() => adapter.GetBatteryStatus());
@@ -164,13 +171,13 @@ public sealed class KeychronQ1HeAdapterTests
     [Fact]
     public void ListeningFitsInsideTheDefaultDeviceTimeout()
     {
-        Assert.True(KeychronQ1HeAdapter.DefaultListenTimeout < TimeSpan.FromSeconds(new DeviceConfiguration().TimeoutSeconds));
+        Assert.True(KeychronLinkRoute.DefaultListenTimeout < TimeSpan.FromSeconds(new DeviceConfiguration().TimeoutSeconds));
     }
 
     [Fact]
     public void FactoryExposesTheAdapterIdAndRejectsAnEmptyDevicePath()
     {
-        var factory = new KeychronQ1HeAdapterFactory();
+        var factory = new RoutedAdapterFactory(KeychronQ1He.Profile);
 
         Assert.Equal("keychron-q1-he", factory.AdapterId);
         factory.ValidateSettings(default);
@@ -206,6 +213,9 @@ public sealed class KeychronQ1HeAdapterTests
     {
         public List<byte[]> Frames { get; } = new();
 
+        /// <summary>Frames of the dongles that are listed here instead of <see cref="Frames"/>.</summary>
+        public Dictionary<string, List<byte[]>> FramesByPath { get; } = new(StringComparer.OrdinalIgnoreCase);
+
         public ConcurrentQueue<byte[]> Writes { get; } = new();
 
         public ConcurrentQueue<string> Opened { get; } = new();
@@ -220,7 +230,7 @@ public sealed class KeychronQ1HeAdapterTests
 
         private sealed class Transport(LinkProvider owner, HidCollectionInfo collection) : IHidReportTransport, IHidReportTransaction
         {
-            private readonly Queue<byte[]> _frames = new(owner.Frames);
+            private readonly Queue<byte[]> _frames = new(owner.FramesByPath.TryGetValue(collection.DevicePath, out var own) ? own : owner.Frames);
 
             public HidCollectionInfo Collection => collection;
 

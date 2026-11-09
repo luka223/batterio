@@ -5,8 +5,11 @@ namespace Batterio.Core;
 /// <summary>The transport through which a device can be reached.</summary>
 public enum DeviceRouteKind
 {
-    /// <summary>The device is detected by the presence of a HID collection; its adapter finds the endpoint itself.</summary>
-    HidPresence,
+    /// <summary>The device itself is connected over USB (for example a mouse that is plugged in to charge) and exposes its own HID collection.</summary>
+    UsbCable,
+
+    /// <summary>The device talks to a USB dongle or base station dedicated to it, which exposes the HID collection.</summary>
+    UsbReceiver,
 
     /// <summary>The device is connected directly over Bluetooth LE and exposes its own HID++ collection.</summary>
     HidppBluetooth,
@@ -24,10 +27,27 @@ public abstract record DeviceRouteDescriptor
     public abstract DeviceRouteKind Kind { get; }
 }
 
-/// <summary>A device that is present as soon as a matching HID collection exists (every device that has no routed adapter).</summary>
-public sealed record HidPresenceRoute(HidCollectionQuery Query) : DeviceRouteDescriptor
+/// <summary>
+/// A device reached through a USB HID collection: every collection that matches <paramref name="Query"/> is one route of kind
+/// <paramref name="Kind"/>, which must be <see cref="DeviceRouteKind.UsbCable"/> or <see cref="DeviceRouteKind.UsbReceiver"/>.
+/// </summary>
+public sealed record UsbHidRouteDescriptor : DeviceRouteDescriptor
 {
-    public override DeviceRouteKind Kind => DeviceRouteKind.HidPresence;
+    public UsbHidRouteDescriptor(DeviceRouteKind kind, HidCollectionQuery query)
+    {
+        if (kind is not (DeviceRouteKind.UsbCable or DeviceRouteKind.UsbReceiver))
+        {
+            throw new ArgumentOutOfRangeException(nameof(kind), kind, "A USB HID route is either a cable or a receiver route.");
+        }
+
+        ArgumentNullException.ThrowIfNull(query);
+        Kind = kind;
+        Query = query;
+    }
+
+    public override DeviceRouteKind Kind { get; }
+
+    public HidCollectionQuery Query { get; }
 }
 
 /// <summary>A device with its own Bluetooth LE HID++ collection, identified by the product ID in the HID path.</summary>

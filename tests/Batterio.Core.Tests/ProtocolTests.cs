@@ -224,11 +224,11 @@ public sealed partial class ProtocolTests
         var collection = new HidCollectionInfo
         {
             DevicePath = "headset",
-            VendorId = LogitechGProX2LightspeedAdapter.VendorId,
-            ProductId = LogitechGProX2LightspeedAdapter.ProductId,
-            InterfaceNumber = LogitechGProX2LightspeedAdapter.InterfaceNumber,
-            UsagePage = LogitechGProX2LightspeedAdapter.UsagePage,
-            Usage = LogitechGProX2LightspeedAdapter.Usage,
+            VendorId = LogitechGProX2Lightspeed.VendorId,
+            ProductId = LogitechGProX2Lightspeed.ProductId,
+            InterfaceNumber = LogitechGProX2Lightspeed.InterfaceNumber,
+            UsagePage = LogitechGProX2Lightspeed.UsagePage,
+            Usage = LogitechGProX2Lightspeed.Usage,
             InputReportLength = 64,
             OutputReportLength = 64,
             SupportedReportIds = new HashSet<byte> { 0x51 }
@@ -257,7 +257,7 @@ public sealed partial class ProtocolTests
         var transaction = new FixtureTransaction(
             CenturionResponse(new byte[] { 0xFF, 0, 1, 0x09 }),
             legacyResponse);
-        var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(collection, transaction));
+        var adapter = RouteHarness.Lightspeed(new FixtureProvider(collection, transaction));
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -271,7 +271,7 @@ public sealed partial class ProtocolTests
     public async Task LightspeedDoesNotUseLegacyFallbackAfterMalformedModernResponse()
     {
         var transaction = new FixtureTransaction(new byte[] { 0x51, 0x01, 0x00, 0x00 });
-        var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
 
         var exception = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -285,9 +285,9 @@ public sealed partial class ProtocolTests
         var collection = new HidCollectionInfo
         {
             DevicePath = "mouse-receiver",
-            VendorId = LogitechGProX2SuperstrikeAdapter.VendorId,
-            ProductId = LogitechGProX2SuperstrikeAdapter.ReceiverProductId,
-            InterfaceNumber = LogitechGProX2SuperstrikeAdapter.InterfaceNumber,
+            VendorId = LogitechGProX2Superstrike.VendorId,
+            ProductId = LogitechGProX2Superstrike.ReceiverProductId,
+            InterfaceNumber = LogitechGProX2Superstrike.InterfaceNumber,
             UsagePage = 0xFF00,
             InputReportLength = 20,
             OutputReportLength = 20,
@@ -300,7 +300,7 @@ public sealed partial class ProtocolTests
             HidppResponse(1, 0, 0, 1, new byte[] { 9, 0, 0 }),
             HidppResponse(1, 9, 0, 1, new byte[] { 0x0F, 0x03, 0 }),
             HidppResponse(1, 9, 0x10, 1, new byte[] { 15, 0, 0x02 }));
-        var adapter = new LogitechGProX2SuperstrikeAdapter(new FixtureProvider(collection, transaction));
+        var adapter = RouteHarness.Superstrike(new FixtureProvider(collection, transaction));
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -366,11 +366,11 @@ public sealed partial class ProtocolTests
     private static HidCollectionInfo HeadsetCollection() => new()
     {
         DevicePath = "headset",
-        VendorId = LogitechGProX2LightspeedAdapter.VendorId,
-        ProductId = LogitechGProX2LightspeedAdapter.ProductId,
-        InterfaceNumber = LogitechGProX2LightspeedAdapter.InterfaceNumber,
-        UsagePage = LogitechGProX2LightspeedAdapter.UsagePage,
-        Usage = LogitechGProX2LightspeedAdapter.Usage,
+        VendorId = LogitechGProX2Lightspeed.VendorId,
+        ProductId = LogitechGProX2Lightspeed.ProductId,
+        InterfaceNumber = LogitechGProX2Lightspeed.InterfaceNumber,
+        UsagePage = LogitechGProX2Lightspeed.UsagePage,
+        Usage = LogitechGProX2Lightspeed.Usage,
         InputReportLength = 64,
         OutputReportLength = 64,
         SupportedReportIds = new HashSet<byte> { 0x51 }

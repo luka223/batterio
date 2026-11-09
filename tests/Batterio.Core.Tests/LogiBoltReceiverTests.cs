@@ -353,8 +353,8 @@ public sealed class LogiBoltReceiverTests
 
     private static readonly HidCollectionQuery[] Query =
     [
-        LogitechReceiverDefinitions.BoltReceiverQuery,
-        LogitechReceiverDefinitions.BoltReceiverShortQuery
+        LogiBoltReceiverManager.BoltReceiverQuery,
+        LogiBoltReceiverManager.BoltReceiverShortQuery
     ];
 
     private static LogiBoltReceiver Create(FakeHidpp hid, IBatterioLog? log = null, LogiBoltReceiverOptions? options = null)

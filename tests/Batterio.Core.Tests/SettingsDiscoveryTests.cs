@@ -65,7 +65,7 @@ public sealed class SettingsDiscoveryTests
         var second = Definition("second", 0x1001);
         var provider = new FakeHidProvider
         {
-            Collections = new[] { Collection(first.PresenceQueries[0]), Collection(first.PresenceQueries[0]) }
+            Collections = new[] { Collection(FirstQuery(first)), Collection(FirstQuery(first)) }
         };
         var registry = new AdapterRegistry(new[] { new TestFactory(first.AdapterId) });
         await using var discovery = new DeviceDiscoveryService(new[] { first, second }, registry, provider);
@@ -83,7 +83,7 @@ public sealed class SettingsDiscoveryTests
     public async Task DiscoveryFailureRetainsLastPresenceAndReportsTheError()
     {
         var definition = Definition("first", 0x1000);
-        var provider = new FakeHidProvider { Collections = new[] { Collection(definition.PresenceQueries[0]) } };
+        var provider = new FakeHidProvider { Collections = new[] { Collection(FirstQuery(definition)) } };
         var registry = new AdapterRegistry(new[] { new TestFactory(definition.AdapterId) });
         await using var discovery = new DeviceDiscoveryService(new[] { definition }, registry, provider);
 
@@ -146,7 +146,7 @@ public sealed class SettingsDiscoveryTests
     {
         using var fixture = new TempDirectory();
         var definition = Definition("first", 0x1000);
-        var collection = Collection(definition.PresenceQueries[0]);
+        var collection = Collection(FirstQuery(definition));
         var provider = new FakeHidProvider { Collections = new[] { collection } };
         var factory = new TestFactory(definition.AdapterId);
         var registry = new AdapterRegistry(new[] { factory });
@@ -180,7 +180,7 @@ public sealed class SettingsDiscoveryTests
         using var fixture = new TempDirectory();
         var owned = Definition("owned", Query(0x1000));
         var neverOwned = Definition("never-owned", Query(0x2000));
-        var ownedCollection = Collection(owned.PresenceQueries[0]);
+        var ownedCollection = Collection(FirstQuery(owned));
         var provider = new FakeHidProvider { Collections = Array.Empty<HidCollectionInfo>() };
         var registry = new AdapterRegistry(new[] { new TestFactory(owned.AdapterId), new TestFactory(neverOwned.AdapterId) });
         var settingsPath = Path.Combine(fixture.Path, "settings.json");
@@ -304,7 +304,7 @@ public sealed class SettingsDiscoveryTests
     {
         using var fixture = new TempDirectory();
         var definition = Definition("first", 0x1000);
-        var provider = new FakeHidProvider { Collections = new[] { Collection(definition.PresenceQueries[0]) } };
+        var provider = new FakeHidProvider { Collections = new[] { Collection(FirstQuery(definition)) } };
         var registry = new AdapterRegistry(new[] { new TestFactory(definition.AdapterId) });
         var settingsPath = Path.Combine(fixture.Path, "settings.json");
         await using var polling = new PollingCoordinator(registry);
@@ -394,9 +394,9 @@ public sealed class SettingsDiscoveryTests
         Assert.Equal(RouteState.Online, keyboardRoute.State);
 
         var log = new NullBatterioLog();
-        await using var mouse = new LogitechMxMaster3sAdapterFactory(hid, bolt, routes, log)
+        await using var mouse = new RoutedAdapterFactory(LogitechMxMaster3s.Profile, hid, bolt, routes, log)
             .CreateAdapter(BuiltInDevices.CatalogById[MouseId].CreateConfiguration());
-        await using var keyboard = new LogitechMxKeysMechanicalAdapterFactory(hid, bolt, routes, log)
+        await using var keyboard = new RoutedAdapterFactory(LogitechMxKeysMechanical.Profile, hid, bolt, routes, log)
             .CreateAdapter(BuiltInDevices.CatalogById[KeyboardId].CreateConfiguration());
         Assert.Equal(64, (await mouse.GetBatteryStatus()).Percentage);
         Assert.Equal(30, (await keyboard.GetBatteryStatus()).Percentage);
@@ -416,7 +416,7 @@ public sealed class SettingsDiscoveryTests
         await discovery.DiscoverAsync();
 
         Assert.Equal(2, routes.GetRoutes(MouseId).Count);
-        await using var mouse = new LogitechMxMaster3sAdapterFactory(hid, bolt, routes)
+        await using var mouse = new RoutedAdapterFactory(LogitechMxMaster3s.Profile, hid, bolt, routes)
             .CreateAdapter(BuiltInDevices.CatalogById[MouseId].CreateConfiguration());
         // Both are online; the Bluetooth route was declared first.
         Assert.Equal(20, (await mouse.GetBatteryStatus()).Percentage);
@@ -700,8 +700,11 @@ public sealed class SettingsDiscoveryTests
         Name = id,
         AdapterId = id,
         Kind = DeviceKind.Mouse,
-        Routes = queries.Select(query => (DeviceRouteDescriptor)new HidPresenceRoute(query)).ToArray()
+        Routes = queries.Select(query => (DeviceRouteDescriptor)new UsbHidRouteDescriptor(DeviceRouteKind.UsbReceiver, query)).ToArray()
     };
+
+    private static HidCollectionQuery FirstQuery(BuiltInDeviceDefinition definition) =>
+        ((UsbHidRouteDescriptor)definition.Routes[0]).Query;
 
     private static HidCollectionQuery Query(ushort productId) => new()
     {

@@ -61,19 +61,19 @@ public sealed class AdapterRegistryTests
     public void LogitechFactoriesValidateOptionalDevicePath()
     {
         var valid = JsonDocument.Parse("{\"devicePath\":\"receiver\"}").RootElement;
-        new LogitechGProX2SuperstrikeAdapterFactory().ValidateSettings(valid);
-        new LogitechGProX2LightspeedAdapterFactory().ValidateSettings(valid);
-        new LogitechMxMaster3sAdapterFactory().ValidateSettings(valid);
-        new LogitechMxKeysMechanicalAdapterFactory().ValidateSettings(valid);
+        new RoutedAdapterFactory(LogitechGProX2Superstrike.Profile).ValidateSettings(valid);
+        new RoutedAdapterFactory(LogitechGProX2Lightspeed.Profile).ValidateSettings(valid);
+        new RoutedAdapterFactory(LogitechMxMaster3s.Profile).ValidateSettings(valid);
+        new RoutedAdapterFactory(LogitechMxKeysMechanical.Profile).ValidateSettings(valid);
 
         var exception = Assert.Throws<AdapterConfigurationException>(() =>
-            new LogitechGProX2LightspeedAdapterFactory().ValidateSettings(
+            new RoutedAdapterFactory(LogitechGProX2Lightspeed.Profile).ValidateSettings(
                 JsonDocument.Parse("{\"devicePath\":\"\"}").RootElement));
         Assert.Contains("devicePath", exception.Message, StringComparison.OrdinalIgnoreCase);
 
         var invalid = JsonDocument.Parse("{\"devicePath\":\"\"}").RootElement;
-        Assert.Throws<AdapterConfigurationException>(() => new LogitechMxMaster3sAdapterFactory().ValidateSettings(invalid));
-        Assert.Throws<AdapterConfigurationException>(() => new LogitechMxKeysMechanicalAdapterFactory().ValidateSettings(invalid));
+        Assert.Throws<AdapterConfigurationException>(() => new RoutedAdapterFactory(LogitechMxMaster3s.Profile).ValidateSettings(invalid));
+        Assert.Throws<AdapterConfigurationException>(() => new RoutedAdapterFactory(LogitechMxKeysMechanical.Profile).ValidateSettings(invalid));
     }
 
     private static DeviceConfiguration Device(string id, string setting) => new()

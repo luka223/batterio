@@ -7,14 +7,17 @@ namespace Batterio.Core.Tests;
 public sealed class BuiltInDeviceTests
 {
     [Fact]
-    public void SuperstrikePresenceQueriesPreferWiredUsbAndLightspeedKeepsItsReceiverQuery()
+    public void SuperstrikeRoutesPreferTheCableAndTheOtherUsbDevicesHaveOneReceiverRoute()
     {
         var superstrike = BuiltInDevices.Catalog.Single(device => device.Id == "logitech-g-pro-x2-superstrike");
-        var wired = superstrike.PresenceQueries[0];
-        var receiver = superstrike.PresenceQueries[1];
+        var cable = Assert.IsType<UsbHidRouteDescriptor>(superstrike.Routes[0]);
+        var receiver = Assert.IsType<UsbHidRouteDescriptor>(superstrike.Routes[1]);
         var lightspeed = BuiltInDevices.Catalog.Single(device => device.Id == "logitech-g-pro-x2-lightspeed");
 
-        Assert.Equal(2, superstrike.PresenceQueries.Count);
+        Assert.Equal(2, superstrike.Routes.Count);
+        Assert.Equal(DeviceRouteKind.UsbCable, cable.Kind);
+        Assert.Equal(DeviceRouteKind.UsbReceiver, receiver.Kind);
+        var wired = cable.Query;
         Assert.Equal((ushort)0x046D, wired.VendorId);
         Assert.Equal((ushort)0xC0A8, wired.ProductId);
         Assert.Equal((ushort)2, wired.InterfaceNumber);
@@ -22,9 +25,34 @@ public sealed class BuiltInDeviceTests
         Assert.Equal((ushort)0x0002, wired.Usage);
         Assert.Equal(20, wired.MinimumReportLength);
         Assert.Equal((byte)0x11, wired.RequiredReportId);
-        Assert.Equal((ushort)0xC54D, receiver.ProductId);
-        Assert.Single(lightspeed.PresenceQueries);
-        Assert.Same(LogitechReceiverDefinitions.LightspeedQuery, lightspeed.PresenceQueries[0]);
+        Assert.Equal((ushort)0xC54D, receiver.Query.ProductId);
+        var headset = Assert.IsType<UsbHidRouteDescriptor>(Assert.Single(lightspeed.Routes));
+        Assert.Equal(DeviceRouteKind.UsbReceiver, headset.Kind);
+        Assert.Same(LogitechGProX2Lightspeed.LightspeedQuery, headset.Query);
+    }
+
+    [Fact]
+    public void UsbRouteDescriptorsAcceptOnlyTheUsbKinds()
+    {
+        var query = KeychronQ1He.LinkRawHidQuery;
+        Assert.Equal(DeviceRouteKind.UsbCable, new UsbHidRouteDescriptor(DeviceRouteKind.UsbCable, query).Kind);
+        Assert.Equal(DeviceRouteKind.UsbReceiver, new UsbHidRouteDescriptor(DeviceRouteKind.UsbReceiver, query).Kind);
+        Assert.Throws<ArgumentOutOfRangeException>(() => new UsbHidRouteDescriptor(DeviceRouteKind.LogiBolt, query));
+        Assert.Throws<ArgumentOutOfRangeException>(() => new UsbHidRouteDescriptor(DeviceRouteKind.HidppBluetooth, query));
+    }
+
+    [Fact]
+    public void EveryCatalogDeviceHasAProfileWithTheSameRoutes()
+    {
+        Assert.Equal(BuiltInDevices.Catalog.Count, BuiltInDevices.Profiles.Count);
+        foreach (var device in BuiltInDevices.Catalog)
+        {
+            var profile = Assert.Single(BuiltInDevices.Profiles, entry => entry.AdapterId == device.AdapterId);
+            Assert.Same(profile.Routes, device.Routes);
+            Assert.All(device.Routes, descriptor => Assert.Contains(descriptor.Kind, profile.CreateRoutes(
+                new RouteContext(new EmptyHidCollectionProvider(), new LogiBoltReceiverManager(new EmptyHidCollectionProvider()),
+                    new NullBatterioLog(), TimeProvider.System, new RouteTimings())).Keys));
+        }
     }
 
     [Fact]
@@ -99,9 +127,11 @@ public sealed class BuiltInDeviceTests
     {
         var device = BuiltInDevices.Catalog[0];
         Assert.Equal("keychron-q1-he", device.Id);
-        Assert.Same(KeychronDefinitions.LinkRawHidQuery, Assert.Single(device.PresenceQueries));
+        var route = Assert.IsType<UsbHidRouteDescriptor>(Assert.Single(device.Routes));
+        Assert.Equal(DeviceRouteKind.UsbReceiver, route.Kind);
+        Assert.Same(KeychronQ1He.LinkRawHidQuery, route.Query);
 
-        var query = KeychronDefinitions.LinkRawHidQuery;
+        var query = KeychronQ1He.LinkRawHidQuery;
         Assert.Equal((ushort)0x3434, query.VendorId);
         Assert.Equal((ushort)0xD030, query.ProductId);
         Assert.Equal((ushort)3, query.InterfaceNumber);
@@ -122,14 +152,12 @@ public sealed class BuiltInDeviceTests
             var bolt = Assert.IsType<LogiBoltRouteDescriptor>(device.Routes[1]);
             Assert.Equal(productId, bolt.WirelessProductId);
             Assert.NotEmpty(bolt.Names!);
-            // Presence is decided by routes, not by a HID collection alone: a receiver without the device does not make it present.
-            Assert.Empty(device.PresenceQueries);
         }
 
-        Assert.Equal("logitech-mx-master-3s", LogitechMxMaster3s.Profile.AdapterId);
-        Assert.Equal("logitech-mx-keys-mechanical", LogitechMxKeysMechanical.Profile.AdapterId);
+        Assert.Equal("logitech-mx-master-3s", LogitechMxMaster3s.Identity.AdapterId);
+        Assert.Equal("logitech-mx-keys-mechanical", LogitechMxKeysMechanical.Identity.AdapterId);
 
-        var query = LogitechReceiverDefinitions.BoltReceiverQuery;
+        var query = LogiBoltReceiverManager.BoltReceiverQuery;
         Assert.Equal((ushort)0x046D, query.VendorId);
         Assert.Equal((ushort)0xC548, query.ProductId);
         Assert.Equal((ushort)2, query.InterfaceNumber);
@@ -164,16 +192,13 @@ public sealed class BuiltInDeviceTests
     [Fact]
     public async Task TestAdaptersHonorCancellation()
     {
-        await using var keychron = new KeychronQ1HeAdapter();
-        await using var superstrike = new LogitechGProX2SuperstrikeAdapter();
-        await using var lightspeed = new LogitechGProX2LightspeedAdapter();
-        await using var omni = new SteelSeriesArctisNovaProOmniAdapter();
-        await using var receivers = new LogiBoltReceiverManager(new EmptyHidCollectionProvider());
-        var routes = new DeviceRouteTable();
-        await using var mxMaster = LogitechRoutedAdapters.Create(
-            LogitechMxMaster3s.Profile, new EmptyHidCollectionProvider(), receivers, routes, new NullBatterioLog(), null);
-        await using var mxKeys = LogitechRoutedAdapters.Create(
-            LogitechMxKeysMechanical.Profile, new EmptyHidCollectionProvider(), receivers, routes, new NullBatterioLog(), null);
+        var empty = new EmptyHidCollectionProvider();
+        await using var keychron = RouteHarness.Create(KeychronQ1He.Profile, empty);
+        await using var superstrike = RouteHarness.Create(LogitechGProX2Superstrike.Profile, empty);
+        await using var lightspeed = RouteHarness.Create(LogitechGProX2Lightspeed.Profile, empty);
+        await using var omni = RouteHarness.Create(SteelSeriesArctisNovaProOmni.Profile, empty);
+        await using var mxMaster = RouteHarness.Create(LogitechMxMaster3s.Profile, empty);
+        await using var mxKeys = RouteHarness.Create(LogitechMxKeysMechanical.Profile, empty);
         using var cancellation = new CancellationTokenSource();
         cancellation.Cancel();
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => keychron.GetBatteryStatus(cancellation.Token));

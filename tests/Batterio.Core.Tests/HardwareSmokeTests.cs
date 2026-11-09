@@ -29,12 +29,12 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     public async Task SuperstrikeWiredMouseCanBeEnumeratedOpenedAndQueried()
     {
         var provider = new WindowsHidCollectionProvider();
-        var query = LogitechReceiverDefinitions.SuperstrikeWiredQuery;
+        var query = LogitechGProX2Superstrike.WiredQuery;
         var collection = Assert.Single(provider.Enumerate(query));
         Assert.True(query.Matches(collection));
 
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(
-            provider, new TestLog(output), collection.DevicePath);
+        await using var adapter = RouteHarness.Superstrike(
+            provider, collection.DevicePath, new TestLog(output));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var reading = await adapter.GetBatteryStatus(timeout.Token);
 
@@ -46,8 +46,8 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     public async Task SuperstrikeReceiverCanBeEnumeratedOpenedAndQueried()
     {
         var provider = new WindowsHidCollectionProvider();
-        var collection = Assert.Single(provider.Enumerate(LogitechReceiverDefinitions.SuperstrikeReceiverQuery));
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider, new TestLog(output), collection.DevicePath);
+        var collection = Assert.Single(provider.Enumerate(LogitechGProX2Superstrike.ReceiverQuery));
+        await using var adapter = RouteHarness.Superstrike(provider, collection.DevicePath, new TestLog(output));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var reading = await adapter.GetBatteryStatus(timeout.Token);
         Assert.True(reading.ChargeState is BatteryChargeState.Charging or BatteryChargeState.NotCharging);
@@ -56,7 +56,7 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     [HardwareFact]
     public async Task LightspeedReceiverCanBeEnumeratedOpenedAndQueried()
     {
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new WindowsHidCollectionProvider(), new TestLog(output));
+        await using var adapter = RouteHarness.Lightspeed(new WindowsHidCollectionProvider(), log: new TestLog(output));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         Assert.NotNull(await adapter.GetBatteryStatus(timeout.Token));
     }
@@ -126,8 +126,8 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     public async Task NovaProOmniHubCanBeEnumeratedOpenedAndQueried()
     {
         var provider = new WindowsHidCollectionProvider();
-        var collection = Assert.Single(provider.Enumerate(SteelSeriesDefinitions.NovaProOmniQuery));
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider, new TestLog(output), collection.DevicePath);
+        var collection = Assert.Single(provider.Enumerate(SteelSeriesArctisNovaProOmni.NovaProOmniQuery));
+        await using var adapter = RouteHarness.Omni(provider, collection.DevicePath, new TestLog(output));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
 
         var reading = await adapter.GetBatteryStatus(timeout.Token);
@@ -147,7 +147,7 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     [HardwareFact]
     public async Task KeychronQ1HeReportsThroughLinkReceiver()
     {
-        await using var adapter = new KeychronQ1HeAdapter(new WindowsHidCollectionProvider(), new TestLog(output));
+        await using var adapter = RouteHarness.Keychron(new WindowsHidCollectionProvider(), log: new TestLog(output));
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         var reading = await adapter.GetBatteryStatus(timeout.Token);
         output.WriteLine($"Keychron Q1 HE: {reading.Percentage}% ({reading.ChargeState})");
@@ -179,8 +179,8 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
         await using var receivers = new LogiBoltReceiverManager(provider, log);
         var factories = new IBatteryAdapterFactory[]
         {
-            new LogitechMxMaster3sAdapterFactory(provider, receivers, routes, log),
-            new LogitechMxKeysMechanicalAdapterFactory(provider, receivers, routes, log)
+            new RoutedAdapterFactory(LogitechMxMaster3s.Profile, provider, receivers, routes, log),
+            new RoutedAdapterFactory(LogitechMxKeysMechanical.Profile, provider, receivers, routes, log)
         };
         var catalog = BuiltInDevices.Catalog.Where(device => factories.Any(factory => factory.AdapterId == device.AdapterId)).ToArray();
         await using var discovery = new DeviceDiscoveryService(
@@ -207,8 +207,8 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     public async Task BoltReceiverSlotsAreListed()
     {
         var provider = new WindowsHidCollectionProvider();
-        var receivers = provider.Enumerate(LogitechReceiverDefinitions.BoltReceiverQuery)
-            .Where(LogitechReceiverDefinitions.BoltReceiverQuery.Matches)
+        var receivers = provider.Enumerate(LogiBoltReceiverManager.BoltReceiverQuery)
+            .Where(LogiBoltReceiverManager.BoltReceiverQuery.Matches)
             .ToArray();
         Assert.NotEmpty(receivers);
         var log = new TestLog(output);
@@ -252,6 +252,62 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
                 }
             }
         }
+    }
+
+    // ----- Research aids for wake-up detection (routes plan, steps 12 and 14) -----
+    // Each test keeps the collections of one receiver or hub open for BATTERIO_LISTEN_SECONDS (default 60) and logs every frame that arrives
+    // without a request, with the time it arrived. Run one while the device sleeps, wakes, goes onto its cable and back, or is switched off
+    // and on, and note which frame (if any) reliably marks "the device is there". Nothing is written to the device.
+
+    [HardwareFact]
+    public Task ListenForUnsolicitedFramesOnTheSuperstrikeReceiver() => ListenAsync(
+        LogitechGProX2Superstrike.ReceiverQuery,
+        LogitechGProX2Superstrike.ReceiverQuery with { MinimumReportLength = 7, RequiredReportId = 0x10 });
+
+    [HardwareFact]
+    public Task ListenForUnsolicitedFramesOnTheLightspeedHeadsetReceiver() => ListenAsync(LogitechGProX2Lightspeed.LightspeedQuery);
+
+    [HardwareFact]
+    public Task ListenForUnsolicitedFramesOnTheOmniHub() => ListenAsync(SteelSeriesArctisNovaProOmni.NovaProOmniQuery);
+
+    private async Task ListenAsync(params HidCollectionQuery[] queries)
+    {
+        var seconds = int.TryParse(Environment.GetEnvironmentVariable("BATTERIO_LISTEN_SECONDS"), out var configured) ? configured : 60;
+        var provider = new WindowsHidCollectionProvider();
+        var collections = queries
+            .SelectMany(query => provider.Enumerate(query).Where(query.Matches))
+            .DistinctBy(collection => collection.DevicePath, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        Assert.NotEmpty(collections);
+        output.WriteLine($"Listening for {seconds} s on {collections.Length} collection(s); trigger the events you want to observe now.");
+
+        var started = System.Diagnostics.Stopwatch.GetTimestamp();
+        var frames = 0;
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
+        var listeners = collections.Select(async collection =>
+        {
+            await using var transport = await provider.OpenAsync(collection, deadline.Token);
+            await using var transaction = await transport.BeginTransactionAsync(deadline.Token);
+            var buffer = new byte[Math.Max(collection.InputReportLength, 64)];
+            try
+            {
+                while (true)
+                {
+                    var count = await transaction.ReadAsync(buffer, deadline.Token);
+                    var at = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds;
+                    Interlocked.Increment(ref frames);
+                    lock (output)
+                    {
+                        output.WriteLine($"+{at,7:F1}s  report 0x{buffer[0]:X2} on {collection.DevicePath}: {Convert.ToHexString(buffer.AsSpan(0, count))}");
+                    }
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
+        }).ToArray();
+        await Task.WhenAll(listeners);
+        output.WriteLine($"{Volatile.Read(ref frames)} frame(s) arrived without a request.");
     }
 
     private sealed class TestLog(Xunit.Abstractions.ITestOutputHelper output) : IBatterioLog

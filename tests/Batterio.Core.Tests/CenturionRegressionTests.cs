@@ -11,7 +11,7 @@ public sealed partial class ProtocolTests
     public async Task CenturionNonUnsupportedErrorsNeverFallBack(byte code)
     {
         var transaction = new FixtureTransaction(CenturionResponse(new byte[] { 0xFF, 0, 1, code }));
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        await using var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
         Assert.Equal(code == 8 ? BatteryAdapterErrorKind.DeviceBusy : BatteryAdapterErrorKind.ProtocolError, error.Kind);
         Assert.Single(transaction.Writes);
@@ -22,7 +22,7 @@ public sealed partial class ProtocolTests
     {
         var transaction = new FixtureTransaction(new[] { CenturionResponse(new byte[] { 0xFF, 9, 1, 9 }) }
             .Concat(ModernResponses()).ToArray());
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        await using var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
         Assert.Equal(11, transaction.Writes.Count);
     }
@@ -36,7 +36,7 @@ public sealed partial class ProtocolTests
         var frames = ModernResponses().ToList();
         frames.Insert(10, BridgeResponse(2, functionSoftware, 90, 0, 2));
         var transaction = new FixtureTransaction(frames.ToArray());
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        await using var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
     }
 
@@ -49,7 +49,7 @@ public sealed partial class ProtocolTests
         if (fragment) frames[10][2] = 1;
         else frames[10][6] = 2; // Declared nested length differs from bytes carried.
         var transaction = new FixtureTransaction(frames);
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        await using var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
         Assert.Equal(BatteryAdapterErrorKind.MalformedResponse, error.Kind);
         Assert.Equal(11, transaction.Writes.Count);
@@ -61,7 +61,7 @@ public sealed partial class ProtocolTests
         var frames = ModernResponses();
         frames[10] = BridgeResponse(0xFF, 2, 1, 8);
         var transaction = new FixtureTransaction(frames);
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        await using var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
         Assert.Equal(BatteryAdapterErrorKind.DeviceBusy, error.Kind);
         Assert.Equal(11, transaction.Writes.Count);
@@ -73,7 +73,7 @@ public sealed partial class ProtocolTests
         var frames = ModernResponses();
         frames[10] = CenturionResponse(new byte[] { 2, 0x11 });
         var transaction = new FixtureTransaction(frames);
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        await using var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
         using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetBatteryStatus(timeout.Token));
         Assert.Equal(11, transaction.Writes.Count);
@@ -83,7 +83,7 @@ public sealed partial class ProtocolTests
     public async Task EmptyRootReplyIsMalformedRatherThanUnsupported()
     {
         var transaction = new FixtureTransaction(CenturionResponse(new byte[] { 0, 1 }));
-        await using var adapter = new LogitechGProX2LightspeedAdapter(new FixtureProvider(HeadsetCollection(), transaction));
+        await using var adapter = RouteHarness.Lightspeed(new FixtureProvider(HeadsetCollection(), transaction));
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
         Assert.Equal(BatteryAdapterErrorKind.MalformedResponse, error.Kind);
         Assert.Single(transaction.Writes);

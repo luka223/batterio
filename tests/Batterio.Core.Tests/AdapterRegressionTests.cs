@@ -54,7 +54,7 @@ public sealed class AdapterRegressionTests
         {
             Collections = new[] { shortCollection, longCollection }
         };
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
         Assert.All(provider.Writes, report => Assert.Equal(0x11, report[0]));
         Assert.Equal("long", provider.Sessions.Single().Collection.DevicePath);
@@ -64,7 +64,7 @@ public sealed class AdapterRegressionTests
     public async Task WiredMouseUsesDeviceIndexFFAndSelectsUsbModelFromTheTransportBitmap()
     {
         var provider = new ScriptProvider(WiredMouse(), request => MouseReply(request));
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -89,7 +89,7 @@ public sealed class AdapterRegressionTests
     public async Task WiredMouseKeepsUnifiedBatteryStatusMappings(byte percentage, byte status, BatteryChargeState expected)
     {
         var provider = new ScriptProvider(WiredMouse(), request => MouseReply(request, percentage, chargeStatus: status));
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -111,11 +111,8 @@ public sealed class AdapterRegressionTests
     public async Task WiredMouseRejectsWrongOrMissingUsbModelId(byte transportBitmap, ushort usbModelId)
     {
         var provider = new ScriptProvider(WiredMouse(), request =>
-            MouseReply(request, transportBitmap: transportBitmap, usbModelId: usbModelId))
-        {
-            Collections = new[] { Mouse(), WiredMouse() }
-        };
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+            MouseReply(request, transportBitmap: transportBitmap, usbModelId: usbModelId));
+        await using var adapter = RouteHarness.Superstrike(provider);
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -131,7 +128,7 @@ public sealed class AdapterRegressionTests
         {
             Collections = new[] { Mouse(), WiredMouse() }
         };
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
 
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
 
@@ -148,7 +145,7 @@ public sealed class AdapterRegressionTests
         {
             Collections = new[] { Mouse(), WiredMouse() }
         };
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider, devicePath: path);
+        await using var adapter = RouteHarness.Superstrike(provider, devicePath: path);
 
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
 
@@ -159,19 +156,90 @@ public sealed class AdapterRegressionTests
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
-    public async Task MultipleCollectionsInTheSelectedModeAreAmbiguous(bool wired)
+    public async Task TwoMatchingEndpointsAreBothRoutesAndADevicePathPinsOne(bool wired)
     {
         var collection = wired ? WiredMouse() : Mouse();
+        var second = collection with { DevicePath = collection.DevicePath + "-2" };
         var provider = new ScriptProvider(collection, request => MouseReply(request))
         {
-            Collections = new[] { collection, collection with { DevicePath = collection.DevicePath + "-2" } }
+            Collections = new[] { collection, second }
         };
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider);
+        Assert.Equal(2, harness.Routes.Count);
 
-        var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
+        await using var adapter = harness.CreateAdapter();
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal(collection.DevicePath, Assert.Single(provider.Sessions).Collection.DevicePath);
 
-        Assert.Equal(BatteryAdapterErrorKind.ReceiverAmbiguous, error.Kind);
-        Assert.Empty(provider.Sessions);
+        await using var pinned = harness.CreateAdapter(second.DevicePath);
+        Assert.Equal(15, (await pinned.GetBatteryStatus()).Percentage);
+        Assert.Equal(second.DevicePath, provider.Sessions.Last().Collection.DevicePath);
+        Assert.Equal(2, provider.Sessions.Count);
+    }
+
+    [Fact]
+    public async Task TheCableIsReadBeforeTheReceiverAndTheReceiverOnceTheCableIsGone()
+    {
+        var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
+        {
+            Collections = new[] { Mouse(), WiredMouse() }
+        };
+        var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider);
+        Assert.Equal(new[] { DeviceRouteKind.UsbCable, DeviceRouteKind.UsbReceiver }, harness.Routes.Select(route => route.Kind));
+        Assert.Equal(new[] { RouteState.Online, RouteState.Unknown }, harness.Routes.Select(route => route.State));
+        await using var adapter = harness.CreateAdapter();
+
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal("wired", Assert.Single(provider.Sessions).Collection.DevicePath);
+
+        // The cable is unplugged: discovery removes its route and the receiver is read next.
+        provider.Collections = new[] { Mouse() };
+        harness.Resolve();
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal("mouse", provider.Sessions.Last().Collection.DevicePath);
+    }
+
+    [Fact]
+    public async Task PluggingInTheCableMakesItTheFirstChoiceAgainAfterTheReceiverWorked()
+    {
+        var provider = new ScriptProvider(Mouse(), request => MouseReply(request));
+        var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider);
+        await using var adapter = harness.CreateAdapter();
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal("mouse", Assert.Single(provider.Sessions).Collection.DevicePath);
+
+        provider.Collections = new[] { Mouse(), WiredMouse() };
+        harness.Resolve();
+
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal("wired", provider.Sessions.Last().Collection.DevicePath);
+    }
+
+    [Fact]
+    public async Task AStaleCablePathFallsThroughToTheReceiverInTheSamePoll()
+    {
+        var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
+        {
+            Collections = new[] { Mouse(), WiredMouse() },
+            FailOpen = path => path == "wired"
+        };
+        var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider);
+        await using var adapter = harness.CreateAdapter();
+
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+        Assert.Equal("mouse", Assert.Single(provider.Sessions).Collection.DevicePath);
+    }
+
+    [Fact]
+    public async Task AReceiverWhoseSlotsAllStayQuietIsOfflineNotAnError()
+    {
+        var provider = new ScriptProvider(Mouse(), _ => null);
+        await using var adapter = RouteHarness.Superstrike(provider);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus(deadline.Token));
+
+        Assert.Equal(BatteryAdapterErrorKind.DeviceOffline, error.Kind);
     }
 
     [Theory]
@@ -181,7 +249,7 @@ public sealed class AdapterRegressionTests
     public async Task MouseReadsPercentageOnlyWhenCapabilityIsPresent(byte wire, int expected)
     {
         var provider = new ScriptProvider(Mouse(), r => MouseReply(r, wire));
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
         var reading = await adapter.GetBatteryStatus();
         Assert.Equal(expected, reading.Percentage);
         Assert.Equal(1, provider.Closed);
@@ -192,7 +260,7 @@ public sealed class AdapterRegressionTests
     public async Task MouseWithoutPercentageCapabilityReturnsOnlyStatus()
     {
         var provider = new ScriptProvider(Mouse(), r => MouseReply(r, 255, false));
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
         var reading = await adapter.GetBatteryStatus();
         Assert.Null(reading.Percentage);
         Assert.Equal(BatteryChargeState.Charging, reading.ChargeState);
@@ -251,7 +319,7 @@ public sealed class AdapterRegressionTests
     public async Task SilentFirstSlotDoesNotPreventDiscoveryOfSecondSlot()
     {
         var provider = new ScriptProvider(Mouse(), r => r[1] == 1 ? null : MouseReply(r));
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
         var reading = await adapter.GetBatteryStatus(deadline.Token);
         Assert.Equal(15, reading.Percentage);
@@ -264,7 +332,7 @@ public sealed class AdapterRegressionTests
     public async Task OverallDeadlineCancelsProbingAndClosesSession(bool wired)
     {
         var provider = new ScriptProvider(wired ? WiredMouse() : Mouse(), _ => null);
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
         using var deadline = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetBatteryStatus(deadline.Token));
         Assert.Single(provider.Writes);
@@ -278,8 +346,8 @@ public sealed class AdapterRegressionTests
     {
         var mouseProvider = new ScriptProvider(Mouse(), _ => null);
         var headsetProvider = new ScriptProvider(Headset(), LegacyReply);
-        await using var mouse = new LogitechGProX2SuperstrikeAdapter(mouseProvider);
-        await using var headset = new LogitechGProX2LightspeedAdapter(headsetProvider);
+        await using var mouse = RouteHarness.Superstrike(mouseProvider);
+        await using var headset = RouteHarness.Lightspeed(headsetProvider);
         using var deadline = new CancellationTokenSource();
         var blocked = mouse.GetBatteryStatus(deadline.Token);
         await mouseProvider.Opened.Task.WaitAsync(TimeSpan.FromSeconds(2));
@@ -300,8 +368,8 @@ public sealed class AdapterRegressionTests
     {
         var collection = WiredMouse();
         var provider = new ScriptProvider(collection, _ => null);
-        await using var first = new LogitechGProX2SuperstrikeAdapter(provider);
-        await using var second = new LogitechGProX2SuperstrikeAdapter(provider, devicePath: collection.DevicePath.ToUpperInvariant());
+        await using var first = RouteHarness.Superstrike(provider);
+        await using var second = RouteHarness.Superstrike(provider, devicePath: collection.DevicePath.ToUpperInvariant());
         using var firstCancel = new CancellationTokenSource();
         using var waitingCancel = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
         var active = first.GetBatteryStatus(firstCancel.Token);
@@ -321,7 +389,7 @@ public sealed class AdapterRegressionTests
     public async Task ReconnectionRediscoversChangedFeatureIndices()
     {
         var provider = new ScriptProvider(WiredMouse(), r => MouseReply(r));
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        await using var adapter = RouteHarness.Superstrike(provider);
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
         provider.Respond = r => MouseReply(r, 80, true, 12, 25);
         Assert.Equal(80, (await adapter.GetBatteryStatus()).Percentage);
@@ -334,7 +402,7 @@ public sealed class AdapterRegressionTests
     public async Task ReloadWaitsForOldReceiverSessionToClose()
     {
         var provider = new ScriptProvider(Mouse(), _ => null);
-        await using var coordinator = new PollingCoordinator(new AdapterRegistry(new[] { new LogitechGProX2SuperstrikeAdapterFactory(provider) }));
+        await using var coordinator = new PollingCoordinator(new AdapterRegistry(new[] { new RouteHarness(LogitechGProX2Superstrike.Profile, provider).Factory }));
         var device = new DeviceConfiguration
         {
             Id = "mouse",
@@ -362,7 +430,7 @@ public sealed class AdapterRegressionTests
     public async Task DisposingAdapterCancelsItsPendingRead(bool wired)
     {
         var provider = new ScriptProvider(wired ? WiredMouse() : Mouse(), _ => null);
-        var adapter = new LogitechGProX2SuperstrikeAdapter(provider);
+        var adapter = RouteHarness.Superstrike(provider);
         var pending = adapter.GetBatteryStatus();
         await provider.Opened.Task;
         await adapter.DisposeAsync();
@@ -379,7 +447,7 @@ public sealed class AdapterRegressionTests
         {
             Collections = new[] { Mouse(), WiredMouse() }
         };
-        await using var adapter = new LogitechGProX2SuperstrikeAdapter(provider, devicePath: "missing");
+        await using var adapter = RouteHarness.Superstrike(provider, devicePath: "missing");
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
         Assert.Equal(BatteryAdapterErrorKind.ReceiverMissing, error.Kind);
         Assert.Empty(provider.Sessions);
@@ -525,9 +593,15 @@ public sealed class AdapterRegressionTests
         public int TransactionsClosed;
         public int MaximumOpen;
         private int _open;
+        public Func<string, bool>? FailOpen { get; set; }
         public IReadOnlyList<HidCollectionInfo> Enumerate(HidCollectionQuery query) => Collections;
         public ValueTask<IHidReportTransport> OpenAsync(HidCollectionInfo info, CancellationToken cancellationToken = default)
         {
+            if (FailOpen?.Invoke(info.DevicePath) == true)
+            {
+                throw new BatteryAdapterException(BatteryAdapterErrorKind.AccessFailure, $"Could not open '{info.DevicePath}'.");
+            }
+
             MaximumOpen = Math.Max(MaximumOpen, Interlocked.Increment(ref _open));
             var session = new Session(this, info);
             Sessions.Enqueue(session);

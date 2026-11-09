@@ -12,6 +12,35 @@ public sealed record LogiBoltMatch(LogiBoltReceiver Receiver, LogiBoltSlot Slot)
 /// </summary>
 public sealed class LogiBoltReceiverManager : IAsyncDisposable
 {
+    public const ushort LogitechVendorId = 0x046D;
+
+    /// <summary>Logi Bolt receiver, HID++ on USB interface 2 (Solaar <c>base_usb.py</c>, <c>_bolt_receiver</c>).</summary>
+    public const ushort BoltReceiverProductId = 0xC548;
+
+    public const ushort BoltReceiverInterfaceNumber = 2;
+
+    /// <summary>The Bolt receiver's long-report (0x11) HID++ collection.</summary>
+    public static readonly HidCollectionQuery BoltReceiverQuery = new()
+    {
+        VendorId = LogitechVendorId,
+        ProductId = BoltReceiverProductId,
+        InterfaceNumber = BoltReceiverInterfaceNumber,
+        UsagePage = 0xFF00,
+        MinimumReportLength = 20,
+        RequiredReportId = 0x11
+    };
+
+    /// <summary>The Bolt receiver's short-report (0x10) HID++ collection, where it sends HID++ 1.0 error replies.</summary>
+    public static readonly HidCollectionQuery BoltReceiverShortQuery = new()
+    {
+        VendorId = LogitechVendorId,
+        ProductId = BoltReceiverProductId,
+        InterfaceNumber = BoltReceiverInterfaceNumber,
+        UsagePage = 0xFF00,
+        MinimumReportLength = 7,
+        RequiredReportId = 0x10
+    };
+
     private readonly IHidCollectionProvider _provider;
     private readonly IBatterioLog _log;
     private readonly LogiBoltReceiverOptions? _options;
@@ -61,10 +90,10 @@ public sealed class LogiBoltReceiverManager : IAsyncDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
         var found = collections.ToArray();
         var longs = found
-            .Where(LogitechReceiverDefinitions.BoltReceiverQuery.Matches)
+            .Where(BoltReceiverQuery.Matches)
             .DistinctBy(collection => collection.DevicePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var shorts = found.Where(LogitechReceiverDefinitions.BoltReceiverShortQuery.Matches).ToArray();
+        var shorts = found.Where(BoltReceiverShortQuery.Matches).ToArray();
 
         await _syncGate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try

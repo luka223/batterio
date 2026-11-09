@@ -38,8 +38,8 @@ public static class KeychronBatteryReportDecoding
 
     public static bool IsQ1HeBatteryReport(ReadOnlySpan<byte> frame) =>
         frame.Length >= MinimumReportLength &&
-        frame[CommandOffset] == KeychronDefinitions.BatteryReportCommand &&
-        frame[ModelOffset] == KeychronDefinitions.Q1HeModelId;
+        frame[CommandOffset] == KeychronQ1He.BatteryReportCommand &&
+        frame[ModelOffset] == KeychronQ1He.Q1HeModelId;
 
     public static ushort DecodeMillivolts(ReadOnlySpan<byte> frame)
     {

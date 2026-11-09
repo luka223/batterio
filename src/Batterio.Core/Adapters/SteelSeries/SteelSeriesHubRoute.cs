@@ -1,10 +1,12 @@
-using System.Diagnostics;
-using System.Text.Json;
 using Batterio.Core.Abstractions;
 
 namespace Batterio.Core;
 
-public sealed class SteelSeriesArctisNovaProOmniAdapter : IBatteryAdapter
+/// <summary>
+/// Reads the Arctis Nova Pro Omni through its base station (hub): writes the status request and waits for the <c>01 B0</c> reply.
+/// The hub can need a few seconds after enumeration before it answers, so a request that gets no answer is retried once after a settle delay.
+/// </summary>
+public sealed class SteelSeriesHubRoute : IBatteryRoute
 {
     public const int MaximumFramesPerQuery = 32;
     public static readonly TimeSpan DefaultReplyTimeout = TimeSpan.FromSeconds(2);
@@ -12,75 +14,28 @@ public sealed class SteelSeriesArctisNovaProOmniAdapter : IBatteryAdapter
 
     private readonly IHidCollectionProvider _provider;
     private readonly IBatterioLog _log;
-    private readonly string? _devicePath;
     private readonly TimeSpan _replyTimeout;
     private readonly TimeSpan _retryDelay;
-    private int _disposed;
-    private readonly CancellationTokenSource _lifetime = new();
 
-    public SteelSeriesArctisNovaProOmniAdapter()
-        : this(new EmptyHidCollectionProvider(), null, null)
-    {
-    }
-
-    public SteelSeriesArctisNovaProOmniAdapter(
+    public SteelSeriesHubRoute(
         IHidCollectionProvider provider,
         IBatterioLog? log = null,
-        string? devicePath = null,
         TimeSpan? replyTimeout = null,
         TimeSpan? retryDelay = null)
     {
         _provider = provider ?? throw new ArgumentNullException(nameof(provider));
         _log = log ?? new NullBatterioLog();
-        _devicePath = devicePath;
         _replyTimeout = replyTimeout ?? DefaultReplyTimeout;
         _retryDelay = retryDelay ?? DefaultRetryDelay;
     }
 
-    public async Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default)
+    public async Task<BatteryReading> ReadAsync(ResolvedRoute route, CancellationToken cancellationToken)
     {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
-        using var attempt = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _lifetime.Token);
-        var started = Stopwatch.GetTimestamp();
-        try { return await QueryAsync(attempt.Token).ConfigureAwait(false); }
-        catch (BatteryAdapterException error)
-        {
-            _log.Log(BatterioLogLevel.Warning, $"SteelSeries query failed ({error.Kind}): {error.Message}");
-            throw;
-        }
-        finally
-        {
-            _log.Log(BatterioLogLevel.Information, $"SteelSeries query finished in {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} ms.");
-        }
-    }
-
-    private async Task<BatteryReading> QueryAsync(CancellationToken cancellationToken)
-    {
-        ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposed) != 0, this);
+        ArgumentNullException.ThrowIfNull(route);
         cancellationToken.ThrowIfCancellationRequested();
+        var collection = route.Collection ?? throw new BatteryAdapterException(BatteryAdapterErrorKind.ReceiverMissing,
+            $"USB receiver route '{route.EndpointPath}' has no HID collection.");
 
-        var query = SteelSeriesDefinitions.NovaProOmniQuery;
-        var collections = _provider.Enumerate(query)
-            .Where(query.Matches)
-            .Where(collection => _devicePath is null ||
-                                 string.Equals(collection.DevicePath, _devicePath, StringComparison.OrdinalIgnoreCase))
-            .ToArray();
-
-        if (collections.Length == 0)
-        {
-            throw new BatteryAdapterException(BatteryAdapterErrorKind.ReceiverMissing,
-                _devicePath is null
-                    ? "The SteelSeries Arctis Nova Pro Omni hub was not found (set the hub switch to USB-1)."
-                    : $"The configured SteelSeries Arctis Nova Pro Omni hub path '{_devicePath}' was not found.");
-        }
-
-        if (_devicePath is null && collections.Length > 1)
-        {
-            throw new BatteryAdapterException(BatteryAdapterErrorKind.ReceiverAmbiguous,
-                "More than one SteelSeries Arctis Nova Pro Omni status collection matched; configure devicePath to select one.");
-        }
-
-        var collection = collections[0];
         try
         {
             return await QueryCollectionAsync(collection, cancellationToken).ConfigureAwait(false);
@@ -145,37 +100,4 @@ public sealed class SteelSeriesArctisNovaProOmniAdapter : IBatteryAdapter
 
     private static string Describe(BatteryReading reading) =>
         reading.Percentage is int percentage ? $"{percentage}% ({reading.ChargeState})" : reading.ChargeState.ToString();
-
-    public ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref _disposed, 1) == 0) _lifetime.Cancel();
-        return ValueTask.CompletedTask;
-    }
-}
-
-public sealed class SteelSeriesArctisNovaProOmniAdapterFactory : IBatteryAdapterFactory
-{
-    private readonly IHidCollectionProvider _provider;
-    private readonly IBatterioLog _log;
-
-    public SteelSeriesArctisNovaProOmniAdapterFactory()
-        : this(new EmptyHidCollectionProvider(), null)
-    {
-    }
-
-    public SteelSeriesArctisNovaProOmniAdapterFactory(IHidCollectionProvider provider, IBatterioLog? log = null)
-    {
-        _provider = provider ?? throw new ArgumentNullException(nameof(provider));
-        _log = log ?? new NullBatterioLog();
-    }
-
-    public string AdapterId => "steelseries-arctis-nova-pro-omni";
-
-    public void ValidateSettings(JsonElement settings) => HidAdapterSettings.ReadDevicePath(settings, AdapterId);
-
-    public IBatteryAdapter CreateAdapter(DeviceConfiguration device) =>
-        new SteelSeriesArctisNovaProOmniAdapter(
-            _provider,
-            _log,
-            HidAdapterSettings.ReadDevicePath(device.AdapterSettings, AdapterId));
 }

@@ -38,12 +38,20 @@ public static class MauiProgram
             var log = services.GetRequiredService<IBatterioLog>();
             return new WindowsBluetoothConnectionMonitor(message => log.Log(BatterioLogLevel.Warning, message));
         });
-        builder.Services.AddSingleton<IBatteryAdapterFactory, KeychronQ1HeAdapterFactory>();
-        builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2SuperstrikeAdapterFactory>();
-        builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechGProX2LightspeedAdapterFactory>();
-        builder.Services.AddSingleton<IBatteryAdapterFactory, SteelSeriesArctisNovaProOmniAdapterFactory>();
-        builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechMxMaster3sAdapterFactory>();
-        builder.Services.AddSingleton<IBatteryAdapterFactory, LogitechMxKeysMechanicalAdapterFactory>();
+        builder.Services.AddSingleton(services => new KeychronLinkMonitor(
+            services.GetRequiredService<IHidCollectionProvider>(),
+            services.GetRequiredService<IBatterioLog>()));
+        foreach (var profile in BuiltInDevices.Profiles)
+        {
+            builder.Services.AddSingleton<IBatteryAdapterFactory>(services => new RoutedAdapterFactory(
+                profile,
+                services.GetRequiredService<IHidCollectionProvider>(),
+                services.GetRequiredService<LogiBoltReceiverManager>(),
+                services.GetRequiredService<IDeviceRouteTable>(),
+                services.GetRequiredService<IBatterioLog>(),
+                keychronLinks: services.GetRequiredService<KeychronLinkMonitor>()));
+        }
+
         builder.Services.AddSingleton<AdapterRegistry>();
         builder.Services.AddSingleton<IUserSettingsStore>(services => new JsonUserSettingsStore(
             new ConfigurationPathProvider().SettingsFilePath,
@@ -56,7 +64,8 @@ public static class MauiProgram
             services.GetRequiredService<DeviceRouteTable>(),
             services.GetRequiredService<LogiBoltReceiverManager>(),
             services.GetRequiredService<IDeviceChangeNotifier>(),
-            services.GetRequiredService<IBluetoothConnectionMonitor>()));
+            services.GetRequiredService<IBluetoothConnectionMonitor>(),
+            usbSources: [services.GetRequiredService<KeychronLinkMonitor>()]));
         builder.Services.AddSingleton<PollingCoordinator>();
         builder.Services.AddSingleton(WindowsToastActivation.Current);
         builder.Services.AddSingleton<IWindowsToastPlatform, WindowsToastPlatform>();
@@ -68,7 +77,8 @@ public static class MauiProgram
             services.GetRequiredService<IUserSettingsStore>(),
             services.GetRequiredService<IDeviceDiscoveryService>(),
             services.GetRequiredService<PollingCoordinator>(),
-            services.GetRequiredService<IBatterioLog>()));
+            services.GetRequiredService<IBatterioLog>(),
+            services.GetRequiredService<IDeviceRouteTable>()));
         builder.Services.AddSingleton<IStartupRegistry, WindowsStartupRegistry>();
         builder.Services.AddSingleton<IStartupRegistrationService, WindowsStartupRegistrationService>();
         builder.Services.AddSingleton(_ => AppUpdateEnvironment.CreateHttpClient());

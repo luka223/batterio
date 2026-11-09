@@ -14,7 +14,7 @@ public sealed class SteelSeriesOmniAdapterTests
     public async Task TheStatusRequestIsWrittenAndTheReplyIsDecoded()
     {
         var provider = new OmniProvider(Collection(Path1)) { Frames = { SteelSeriesOmniDecodingTests.Frame(97, 81) } };
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider);
+        await using var adapter = RouteHarness.Omni(provider);
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -32,7 +32,7 @@ public sealed class SteelSeriesOmniAdapterTests
         provider.Frames.Add(Event(0xB5));
         provider.Frames.Add(new byte[64]);
         provider.Frames.Add(SteelSeriesOmniDecodingTests.Frame(40, 70));
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider);
+        await using var adapter = RouteHarness.Omni(provider);
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -44,12 +44,12 @@ public sealed class SteelSeriesOmniAdapterTests
     public async Task EventFloodWithoutAReplyFailsAsAProtocolError()
     {
         var provider = new OmniProvider(Collection(Path1));
-        for (var index = 0; index < SteelSeriesArctisNovaProOmniAdapter.MaximumFramesPerQuery + 5; index++)
+        for (var index = 0; index < SteelSeriesHubRoute.MaximumFramesPerQuery + 5; index++)
         {
             provider.Frames.Add(Event(0xB7));
         }
 
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider);
+        await using var adapter = RouteHarness.Omni(provider);
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -59,7 +59,7 @@ public sealed class SteelSeriesOmniAdapterTests
     [Fact]
     public async Task MissingHubIsReportedAsReceiverMissing()
     {
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(new OmniProvider());
+        await using var adapter = RouteHarness.Omni(new OmniProvider());
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -68,20 +68,25 @@ public sealed class SteelSeriesOmniAdapterTests
     }
 
     [Fact]
-    public async Task TwoHubsWithoutADevicePathAreAmbiguous()
+    public async Task TwoHubsWithoutADevicePathReadTheFirstThatAnswers()
     {
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(new OmniProvider(Collection(Path1), Collection(Path2)));
+        var provider = new OmniProvider(Collection(Path1), Collection(Path2));
+        provider.LaterOpens.Enqueue(new List<byte[]>()); // the first hub stays silent on its settle retry too
+        provider.LaterOpens.Enqueue(new List<byte[]> { SteelSeriesOmniDecodingTests.Frame(33, 44) });
+        await using var adapter = RouteHarness.Omni(
+            provider, replyTimeout: TimeSpan.FromMilliseconds(50), retryDelay: TimeSpan.FromMilliseconds(10));
 
-        var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
+        var reading = await adapter.GetBatteryStatus();
 
-        Assert.Equal(BatteryAdapterErrorKind.ReceiverAmbiguous, error.Kind);
+        Assert.Equal(33, reading.Percentage);
+        Assert.Equal(new[] { Path1, Path1, Path2 }, provider.Opened);
     }
 
     [Fact]
     public async Task TheDevicePathSelectsTheMatchingHub()
     {
         var provider = new OmniProvider(Collection(Path1), Collection(Path2)) { Frames = { SteelSeriesOmniDecodingTests.Frame(33, 44) } };
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider, devicePath: Path2.ToUpperInvariant());
+        await using var adapter = RouteHarness.Omni(provider, devicePath: Path2.ToUpperInvariant());
 
         var reading = await adapter.GetBatteryStatus();
 
@@ -93,7 +98,7 @@ public sealed class SteelSeriesOmniAdapterTests
     public async Task AnExplicitDevicePathThatIsGoneIsNotReplacedByAnotherHub()
     {
         var provider = new OmniProvider(Collection(Path1));
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider, devicePath: Path2);
+        await using var adapter = RouteHarness.Omni(provider, devicePath: Path2);
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -105,7 +110,7 @@ public sealed class SteelSeriesOmniAdapterTests
     public async Task NoReplyTimesOutAsBusy()
     {
         var provider = new OmniProvider(Collection(Path1));
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(
+        await using var adapter = RouteHarness.Omni(
             provider, replyTimeout: TimeSpan.FromMilliseconds(50), retryDelay: TimeSpan.FromMilliseconds(10));
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
@@ -119,7 +124,7 @@ public sealed class SteelSeriesOmniAdapterTests
     {
         var provider = new OmniProvider(Collection(Path1));
         provider.LaterOpens.Enqueue([SteelSeriesOmniDecodingTests.Frame(60, 30)]);
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(
+        await using var adapter = RouteHarness.Omni(
             provider, replyTimeout: TimeSpan.FromMilliseconds(50), retryDelay: TimeSpan.FromMilliseconds(10));
 
         var reading = await adapter.GetBatteryStatus();
@@ -133,7 +138,7 @@ public sealed class SteelSeriesOmniAdapterTests
     public async Task CancellationDuringTheRetryDelayIsNotReportedAsBusy()
     {
         var provider = new OmniProvider(Collection(Path1));
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(
+        await using var adapter = RouteHarness.Omni(
             provider, replyTimeout: TimeSpan.FromMilliseconds(50), retryDelay: TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
 
@@ -146,12 +151,12 @@ public sealed class SteelSeriesOmniAdapterTests
     public async Task AProtocolErrorIsNotRetried()
     {
         var provider = new OmniProvider(Collection(Path1));
-        for (var index = 0; index < SteelSeriesArctisNovaProOmniAdapter.MaximumFramesPerQuery + 5; index++)
+        for (var index = 0; index < SteelSeriesHubRoute.MaximumFramesPerQuery + 5; index++)
         {
             provider.Frames.Add(Event(0xB7));
         }
 
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider, retryDelay: TimeSpan.FromMilliseconds(10));
+        await using var adapter = RouteHarness.Omni(provider, retryDelay: TimeSpan.FromMilliseconds(10));
 
         var error = await Assert.ThrowsAsync<BatteryAdapterException>(() => adapter.GetBatteryStatus());
 
@@ -162,7 +167,7 @@ public sealed class SteelSeriesOmniAdapterTests
     [Fact]
     public void BothAttemptsAndTheSettleDelayFitInsideTheDefaultDeviceTimeout()
     {
-        var worstCase = 2 * SteelSeriesArctisNovaProOmniAdapter.DefaultReplyTimeout + SteelSeriesArctisNovaProOmniAdapter.DefaultRetryDelay;
+        var worstCase = 2 * SteelSeriesHubRoute.DefaultReplyTimeout + SteelSeriesHubRoute.DefaultRetryDelay;
 
         Assert.True(worstCase < TimeSpan.FromSeconds(new DeviceConfiguration().TimeoutSeconds));
     }
@@ -171,7 +176,7 @@ public sealed class SteelSeriesOmniAdapterTests
     public async Task CallerCancellationIsHonoredInsteadOfBecomingATimeout()
     {
         var provider = new OmniProvider(Collection(Path1));
-        await using var adapter = new SteelSeriesArctisNovaProOmniAdapter(provider, replyTimeout: TimeSpan.FromSeconds(30));
+        await using var adapter = RouteHarness.Omni(provider, replyTimeout: TimeSpan.FromSeconds(30));
         using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(50));
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => adapter.GetBatteryStatus(cancellation.Token));
@@ -184,7 +189,7 @@ public sealed class SteelSeriesOmniAdapterTests
     [Fact]
     public async Task UseAfterDisposeThrows()
     {
-        var adapter = new SteelSeriesArctisNovaProOmniAdapter(new OmniProvider(Collection(Path1)));
+        var adapter = RouteHarness.Omni(new OmniProvider(Collection(Path1)));
         await adapter.DisposeAsync();
 
         await Assert.ThrowsAsync<ObjectDisposedException>(() => adapter.GetBatteryStatus());
@@ -193,7 +198,7 @@ public sealed class SteelSeriesOmniAdapterTests
     [Fact]
     public void FactoryExposesTheAdapterIdAndRejectsAnEmptyDevicePath()
     {
-        var factory = new SteelSeriesArctisNovaProOmniAdapterFactory();
+        var factory = new RoutedAdapterFactory(SteelSeriesArctisNovaProOmni.Profile);
 
         Assert.Equal("steelseries-arctis-nova-pro-omni", factory.AdapterId);
         factory.ValidateSettings(default);
@@ -207,7 +212,7 @@ public sealed class SteelSeriesOmniAdapterTests
     [Fact]
     public async Task FactoryCreatesIndependentAdaptersThroughTheRegistry()
     {
-        var registry = new AdapterRegistry([new SteelSeriesArctisNovaProOmniAdapterFactory()]);
+        var registry = new AdapterRegistry([new RoutedAdapterFactory(SteelSeriesArctisNovaProOmni.Profile)]);
         var device = BuiltInDevices.CatalogById["steelseries-arctis-nova-pro-omni"].CreateConfiguration();
 
         await using var first = registry.CreateAdapter(device);

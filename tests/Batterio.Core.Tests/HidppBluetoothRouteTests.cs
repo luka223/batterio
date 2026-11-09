@@ -151,8 +151,8 @@ public sealed class HidppBluetoothRouteTests
     [Fact]
     public void ProfilesMatchByModelIdOrName()
     {
-        var mouse = LogitechMxMaster3s.Profile;
-        var keyboard = LogitechMxKeysMechanical.Profile;
+        var mouse = LogitechMxMaster3s.Identity;
+        var keyboard = LogitechMxKeysMechanical.Identity;
 
         Assert.True(mouse.Matches("anything", new ushort[] { 0xB034 }));
         Assert.True(mouse.Matches("MX Master 3S", Array.Empty<ushort>()));

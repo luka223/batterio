@@ -16,18 +16,23 @@ public sealed class RoutedBatteryAdapter : IBatteryAdapter
     private readonly IDeviceRouteTable _table;
     private readonly IBatterioLog _log;
     private readonly string? _devicePath;
+    private readonly string _missingMessage;
     private readonly CancellationTokenSource _lifetime = new();
+    private readonly object _orderGate = new();
     private string? _lastGoodKey;
+    private string? _knownRouteSet;
     private int _disposed;
 
     /// <param name="devicePath">Optional <c>devicePath</c> setting: only routes whose endpoint path equals it are used.</param>
+    /// <param name="missingMessage">What the user is told when the device has no route at all (for example "receiver not found").</param>
     public RoutedBatteryAdapter(
         string deviceId,
         string displayName,
         IReadOnlyDictionary<DeviceRouteKind, IBatteryRoute> routes,
         IDeviceRouteTable table,
         IBatterioLog? log = null,
-        string? devicePath = null)
+        string? devicePath = null,
+        string? missingMessage = null)
     {
         _deviceId = deviceId ?? throw new ArgumentNullException(nameof(deviceId));
         _displayName = displayName ?? throw new ArgumentNullException(nameof(displayName));
@@ -35,6 +40,7 @@ public sealed class RoutedBatteryAdapter : IBatteryAdapter
         _table = table ?? throw new ArgumentNullException(nameof(table));
         _log = log ?? new NullBatterioLog();
         _devicePath = devicePath;
+        _missingMessage = missingMessage ?? $"No route to {displayName} was found.";
     }
 
     public async Task<BatteryReading> GetBatteryStatus(CancellationToken cancellationToken = default)
@@ -70,8 +76,8 @@ public sealed class RoutedBatteryAdapter : IBatteryAdapter
         if (routes.Length == 0)
         {
             throw new BatteryAdapterException(BatteryAdapterErrorKind.ReceiverMissing, _devicePath is null
-                ? $"No Bluetooth connection to {_displayName} and no Logi Bolt receiver with it paired was found."
-                : $"The configured HID++ endpoint path '{_devicePath}' was not found.");
+                ? _missingMessage
+                : $"The configured endpoint path '{_devicePath}' was not found.");
         }
 
         var attempts = Order(routes);
@@ -88,7 +94,11 @@ public sealed class RoutedBatteryAdapter : IBatteryAdapter
             try
             {
                 var reading = await implementation.ReadAsync(route, cancellationToken).ConfigureAwait(false);
-                Volatile.Write(ref _lastGoodKey, route.Key);
+                lock (_orderGate)
+                {
+                    _lastGoodKey = route.Key;
+                }
+
                 return (reading, route);
             }
             catch (BatteryAdapterException exception) when (exception.Kind == BatteryAdapterErrorKind.DeviceOffline)
@@ -105,7 +115,11 @@ public sealed class RoutedBatteryAdapter : IBatteryAdapter
         }
 
         // An unusable route (access failure, protocol error) is worth more to the user than "offline" from the others.
-        Volatile.Write(ref _lastGoodKey, null);
+        lock (_orderGate)
+        {
+            _lastGoodKey = null;
+        }
+
         if (failure is not null)
         {
             throw failure;
@@ -119,10 +133,24 @@ public sealed class RoutedBatteryAdapter : IBatteryAdapter
     /// <summary>
     /// Online routes first, then those whose state is unknown; within each group the route that worked last time comes first.
     /// Routes reported offline are skipped unless nothing else is left, because the report may be stale.
+    /// Whenever the set of routes changes (a cable or receiver appears, a Bluetooth entry returns) the memory of the route that worked
+    /// is dropped, so the preferred transport (the descriptor order) decides again instead of the one that happened to work last.
     /// </summary>
     private IEnumerable<ResolvedRoute> Order(IReadOnlyList<ResolvedRoute> routes)
     {
-        var lastGood = Volatile.Read(ref _lastGoodKey);
+        var routeSet = string.Join('|', routes.Select(route => route.Key).Order(StringComparer.Ordinal));
+        string? lastGood;
+        lock (_orderGate)
+        {
+            if (!string.Equals(_knownRouteSet, routeSet, StringComparison.Ordinal))
+            {
+                _knownRouteSet = routeSet;
+                _lastGoodKey = null;
+            }
+
+            lastGood = _lastGoodKey;
+        }
+
         var ordered = routes
             .Select((route, position) => (route, position))
             .OrderBy(entry => entry.route.State switch { RouteState.Online => 0, RouteState.Unknown => 1, _ => 2 })

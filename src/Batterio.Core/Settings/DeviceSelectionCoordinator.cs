@@ -9,6 +9,9 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
     private readonly IDeviceDiscoveryService _discovery;
     private readonly PollingCoordinator _polling;
     private readonly IBatterioLog _log;
+    private readonly IDeviceRouteTable? _routes;
+    private readonly RefreshCoalescer _immediateReads;
+    private readonly Dictionary<string, string> _routeSets = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _stateGate = new();
     private readonly HashSet<string> _sessionKnownDeviceIds = new(StringComparer.OrdinalIgnoreCase);
@@ -25,19 +28,31 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         IUserSettingsStore settingsStore,
         IDeviceDiscoveryService discovery,
         PollingCoordinator polling,
-        IBatterioLog? log = null)
+        IBatterioLog? log = null,
+        IDeviceRouteTable? routes = null,
+        TimeSpan? immediateReadWindow = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
         _discovery = discovery ?? throw new ArgumentNullException(nameof(discovery));
         _polling = polling ?? throw new ArgumentNullException(nameof(polling));
         _log = log ?? new NullBatterioLog();
+        _routes = routes;
+        _immediateReads = new RefreshCoalescer(
+            ReadSelectedDeviceAsync,
+            immediateReadWindow,
+            onError: (deviceId, exception) =>
+                _log.Log(BatterioLogLevel.Warning, $"Reading device '{deviceId}' after its connection changed failed.", exception));
         _catalog = catalog.Where(device => _discovery.CurrentSnapshot.Devices.Any(
             discovered => string.Equals(discovered.DeviceId, device.Id, StringComparison.OrdinalIgnoreCase))).ToArray();
         _discoverySnapshot = _discovery.CurrentSnapshot;
         _snapshot = CreateSnapshot(isLoading: true);
         _discovery.SnapshotChanged += OnDiscoverySnapshotChanged;
         _discovery.DeviceCameOnline += OnDeviceCameOnline;
+        if (_routes is not null)
+        {
+            _routes.RoutesChanged += OnRoutesChanged;
+        }
     }
 
     public DeviceSelectionSnapshot CurrentSnapshot
@@ -170,6 +185,12 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         {
             _discovery.SnapshotChanged -= OnDiscoverySnapshotChanged;
             _discovery.DeviceCameOnline -= OnDeviceCameOnline;
+            if (_routes is not null)
+            {
+                _routes.RoutesChanged -= OnRoutesChanged;
+            }
+
+            _immediateReads.Dispose();
             await StopAsync().ConfigureAwait(false);
             _gate.Dispose();
         }
@@ -182,14 +203,37 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
 
     private void OnDeviceCameOnline(object? sender, DeviceCameOnlineEventArgs args)
     {
-        _ = ReadDeviceThatCameOnlineAsync(args.DeviceId);
+        _immediateReads.Request(args.DeviceId);
     }
 
     /// <summary>
-    /// A device woke up or was switched back to this computer: read it now rather than at its next poll,
+    /// A device changed transport (a cable or receiver was plugged in or removed, Bluetooth appeared, a Bolt device was paired): read it
+    /// now rather than at its next poll. Only a change of the routes themselves counts: a route going offline must not cause a request to
+    /// a sleeping device, and one coming online is announced as <see cref="IDeviceDiscoveryService.DeviceCameOnline"/>. A device that has
+    /// just appeared or vanished is skipped too: starting or stopping its polling is what reads (or stops reading) it.
+    /// </summary>
+    private void OnRoutesChanged(object? sender, RoutesChangedEventArgs args)
+    {
+        var routeSet = string.Join('|', _routes!.GetRoutes(args.DeviceId).Select(route => route.Key).Order(StringComparer.Ordinal));
+        bool changedWhilePresent;
+        lock (_stateGate)
+        {
+            _routeSets.TryGetValue(args.DeviceId, out var previous);
+            _routeSets[args.DeviceId] = routeSet;
+            changedWhilePresent = !string.IsNullOrEmpty(previous) && routeSet.Length > 0 && previous != routeSet;
+        }
+
+        if (changedWhilePresent)
+        {
+            _immediateReads.Request(args.DeviceId);
+        }
+    }
+
+    /// <summary>
+    /// A device woke up, was switched back to this computer or changed transport: read it now rather than at its next poll,
     /// which may be minutes away. Uses the normal refresh path, so nothing downstream changes.
     /// </summary>
-    private async Task ReadDeviceThatCameOnlineAsync(string deviceId)
+    private async Task ReadSelectedDeviceAsync(string deviceId)
     {
         try
         {
@@ -214,10 +258,6 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         catch (Exception exception) when (exception is ObjectDisposedException or OperationCanceledException)
         {
             // Shutting down.
-        }
-        catch (Exception exception)
-        {
-            _log.Log(BatterioLogLevel.Warning, $"Reading device '{deviceId}' after it came online failed.", exception);
         }
     }
 

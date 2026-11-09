@@ -2,8 +2,14 @@ using Batterio.Core.Abstractions;
 
 namespace Batterio.Core;
 
-public static class KeychronDefinitions
+/// <summary>
+/// Keychron Q1 HE: its battery is read from reports the user's custom firmware pushes through the Keychron Link dongle
+/// (the keyboard ignores requests over 2.4 GHz, so Batterio only ever listens). Hardware-verified; no other way to read it is supported.
+/// </summary>
+public static class KeychronQ1He
 {
+    public const string AdapterId = "keychron-q1-he";
+
     public const ushort VendorId = 0x3434;
 
     /// <summary>Keychron Link 2.4 GHz dongle.</summary>
@@ -28,4 +34,20 @@ public static class KeychronDefinitions
         Usage = 0x0061,
         MinimumReportLength = 33
     };
+
+    public static IReadOnlyList<DeviceRouteDescriptor> Routes { get; } =
+    [
+        new UsbHidRouteDescriptor(DeviceRouteKind.UsbReceiver, LinkRawHidQuery)
+    ];
+
+    public static RoutedDeviceProfile Profile { get; } = new(
+        AdapterId,
+        "Keychron Q1 HE",
+        "The Keychron Link receiver was not found.",
+        Routes,
+        context => new Dictionary<DeviceRouteKind, IBatteryRoute>
+        {
+            [DeviceRouteKind.UsbReceiver] = new KeychronLinkRoute(
+                context.Provider, context.Log, context.Timings.ListenTimeout, context.TimeProvider, context.KeychronLinks)
+        });
 }

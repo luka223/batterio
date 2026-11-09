@@ -33,6 +33,8 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
     private readonly bool _ownsBolt;
     private readonly IDeviceChangeNotifier _changeNotifier;
     private readonly IBluetoothConnectionMonitor _bluetooth;
+    private readonly IReadOnlyList<IUsbRouteStateSource> _usbSources;
+    private readonly DeviceRouteResolver _resolver;
     private readonly DeviceDiscoveryOptions _options;
     private readonly IReadOnlyList<HidCollectionQuery> _queries;
     private readonly SemaphoreSlim _scanGate = new(1, 1);
@@ -59,7 +61,8 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         LogiBoltReceiverManager? receivers = null,
         IDeviceChangeNotifier? changeNotifier = null,
         IBluetoothConnectionMonitor? bluetooth = null,
-        DeviceDiscoveryOptions? options = null)
+        DeviceDiscoveryOptions? options = null,
+        IEnumerable<IUsbRouteStateSource>? usbSources = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         _registry = registry ?? throw new ArgumentNullException(nameof(registry));
@@ -69,6 +72,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         _changeNotifier = changeNotifier ?? new NullDeviceChangeNotifier();
         _bluetooth = bluetooth ?? new NullBluetoothConnectionMonitor();
         _options = options ?? new DeviceDiscoveryOptions();
+        _usbSources = usbSources?.ToArray() ?? [];
 
         _catalog = catalog
             .Where(device => _registry.TryGetFactory(device.AdapterId, out _))
@@ -89,7 +93,8 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             }
         }
 
-        _queries = routes.SelectMany(QueriesOf).Distinct().ToArray();
+        _resolver = new DeviceRouteResolver(_bolt, _bluetooth, _usbSources);
+        _queries = routes.SelectMany(DeviceRouteResolver.QueriesOf).Distinct().ToArray();
         _snapshot = new DeviceDiscoverySnapshot(0, OrderedStates());
     }
 
@@ -221,6 +226,11 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         _subscribed = true;
         _changeNotifier.Changed += OnHidDevicesChanged;
         _bluetooth.StatusChanged += OnLinkStateChanged;
+        foreach (var source in _usbSources)
+        {
+            source.StateChanged += OnLinkStateChanged;
+        }
+
         if (_bolt is not null)
         {
             _bolt.PairingChanged += OnBoltPairingChanged;
@@ -252,6 +262,11 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         _subscribed = false;
         _changeNotifier.Changed -= OnHidDevicesChanged;
         _bluetooth.StatusChanged -= OnLinkStateChanged;
+        foreach (var source in _usbSources)
+        {
+            source.StateChanged -= OnLinkStateChanged;
+        }
+
         if (_bolt is not null)
         {
             _bolt.PairingChanged -= OnBoltPairingChanged;
@@ -416,7 +431,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
 
         // Receivers are opened (and their devices announced) before routes are resolved, so a device is present
         // as soon as the receiver knows about it. A failed Bolt enumeration keeps the receivers as they are.
-        if (_bolt is not null && !scan.Failures.ContainsKey(LogitechReceiverDefinitions.BoltReceiverQuery))
+        if (_bolt is not null && !scan.Failures.ContainsKey(LogiBoltReceiverManager.BoltReceiverQuery))
         {
             try
             {
@@ -425,6 +440,18 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
                 _log.Log(BatterioLogLevel.Warning, "Synchronising the Logi Bolt receivers failed.", exception);
+            }
+        }
+
+        foreach (var source in _usbSources)
+        {
+            try
+            {
+                await source.SyncAsync(scan.Collections, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _log.Log(BatterioLogLevel.Warning, "Synchronising a USB route state source failed.", exception);
             }
         }
 
@@ -477,54 +504,10 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         var routeSets = new Dictionary<string, IReadOnlyList<ResolvedRoute>>(StringComparer.OrdinalIgnoreCase);
         foreach (var definition in _catalog)
         {
-            var routes = new List<ResolvedRoute>();
-            var hasPresence = false;
-            Exception? failure = null;
-            foreach (var descriptor in definition.Routes)
-            {
-                switch (descriptor)
-                {
-                    case HidPresenceRoute presence:
-                        if (scan.Collections.Any(presence.Query.Matches)) hasPresence = true;
-                        else if (scan.Failures.TryGetValue(presence.Query, out var presenceFailure)) failure ??= presenceFailure;
-                        break;
-
-                    case HidppBluetoothRouteDescriptor bluetooth:
-                        var bluetoothQuery = HidppBluetoothRoute.Query(bluetooth.ProductId);
-                        var endpoints = scan.Collections.Where(bluetoothQuery.Matches).OrderBy(collection => collection.DevicePath, StringComparer.OrdinalIgnoreCase).ToArray();
-                        foreach (var endpoint in endpoints)
-                        {
-                            routes.Add(new ResolvedRoute(definition.Id, DeviceRouteKind.HidppBluetooth, endpoint.DevicePath, null,
-                                _bluetooth.GetState(endpoint.DevicePath) switch
-                                {
-                                    BluetoothLinkState.Connected => RouteState.Online,
-                                    BluetoothLinkState.Disconnected => RouteState.Offline,
-                                    _ => RouteState.Unknown
-                                }, endpoint));
-                        }
-
-                        if (endpoints.Length == 0 && scan.Failures.TryGetValue(bluetoothQuery, out var bluetoothFailure)) failure ??= bluetoothFailure;
-                        break;
-
-                    case LogiBoltRouteDescriptor bolt when _bolt is not null:
-                        if (scan.Failures.TryGetValue(LogitechReceiverDefinitions.BoltReceiverQuery, out var boltFailure))
-                        {
-                            failure ??= boltFailure;
-                            break;
-                        }
-
-                        foreach (var match in _bolt.FindAll(bolt.WirelessProductId, bolt.Names))
-                        {
-                            routes.Add(new ResolvedRoute(definition.Id, DeviceRouteKind.LogiBolt, match.Receiver.Path, match.Slot.Slot,
-                                match.Slot.Online ? RouteState.Online : RouteState.Offline));
-                        }
-
-                        break;
-                }
-            }
+            var (routes, failure) = _resolver.Resolve(definition, scan.Collections, scan.Failures);
 
             DeviceDiscoveryState next;
-            if (hasPresence || routes.Count > 0)
+            if (routes.Count > 0)
             {
                 next = new DeviceDiscoveryState
                 {
@@ -560,7 +543,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         }
 
         // Adapters read the routes as soon as they hear of a device, so they are published before the snapshot.
-        foreach (var definition in _catalog.Where(device => device.Routes.Any(route => route is not HidPresenceRoute)))
+        foreach (var definition in _catalog)
         {
             if (routeSets.TryGetValue(definition.Id, out var routes))
             {
@@ -620,14 +603,6 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
 
         return CurrentSnapshot;
     }
-
-    private static IEnumerable<HidCollectionQuery> QueriesOf(DeviceRouteDescriptor descriptor) => descriptor switch
-    {
-        HidPresenceRoute presence => [presence.Query],
-        HidppBluetoothRouteDescriptor bluetooth => [HidppBluetoothRoute.Query(bluetooth.ProductId)],
-        LogiBoltRouteDescriptor => [LogitechReceiverDefinitions.BoltReceiverQuery, LogitechReceiverDefinitions.BoltReceiverShortQuery],
-        _ => []
-    };
 
     private DeviceDiscoveryState GetState(string id)
     {
