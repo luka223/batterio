@@ -282,9 +282,55 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
     public Task ListenForUnsolicitedFramesOnEveryOmniHubCollection() => ListenAsync(
         new HidCollectionQuery { VendorId = SteelSeriesArctisNovaProOmni.VendorId, ProductId = SteelSeriesArctisNovaProOmni.NovaProOmniProductId });
 
+    // The Keychron's Offline is inferred from silence (KeychronLinkListener.SilenceTimeout), so the longest gap between battery reports while
+    // the keyboard is awake decides whether that timeout is safe. Run it awake and idle for a few minutes, then let it sleep and wake it.
+    [HardwareFact]
+    public Task ListenForKeychronReports()
+    {
+        long? previous = null;
+        var longestGap = TimeSpan.Zero;
+        var gate = new object();
+        return ListenAsync([KeychronQ1He.LinkRawHidQuery], null, (frame, count) =>
+        {
+            if (!KeychronBatteryReportDecoding.IsQ1HeBatteryReport(frame.AsSpan(0, count)))
+            {
+                return null;
+            }
+
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            string note;
+            lock (gate)
+            {
+                if (previous is { } last)
+                {
+                    var gap = System.Diagnostics.Stopwatch.GetElapsedTime(last, now);
+                    if (gap > longestGap)
+                    {
+                        longestGap = gap;
+                    }
+
+                    note = $"battery report, {gap.TotalSeconds:F2} s since the previous one (longest {longestGap.TotalSeconds:F2} s, " +
+                           $"silence timeout {KeychronLinkListener.SilenceTimeout.TotalSeconds:F0} s)";
+                }
+                else
+                {
+                    note = "first battery report";
+                }
+
+                previous = now;
+            }
+
+            return note;
+        });
+    }
+
     private Task ListenAsync(params HidCollectionQuery[] queries) => ListenAsync(queries, null);
 
-    private async Task ListenAsync(HidCollectionQuery[] queries, Func<HidCollectionInfo, bool>? filter)
+    /// <param name="annotate">Optional: a note appended to the line of each frame (null for none). Called from one listener at a time per collection.</param>
+    private async Task ListenAsync(
+        HidCollectionQuery[] queries,
+        Func<HidCollectionInfo, bool>? filter,
+        Func<byte[], int, string?>? annotate = null)
     {
         var seconds = int.TryParse(Environment.GetEnvironmentVariable("BATTERIO_LISTEN_SECONDS"), out var configured) ? configured : 60;
 
@@ -329,9 +375,9 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
                     var count = await transaction.ReadAsync(buffer, deadline.Token);
                     var at = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds;
                     Interlocked.Increment(ref frames);
-                    {
-                        Write($"{DateTime.Now:HH:mm:ss} +{at,7:F1}s  report 0x{buffer[0]:X2} on {collection.DevicePath}: {Convert.ToHexString(buffer.AsSpan(0, count))}");
-                    }
+                    var note = annotate?.Invoke(buffer, count);
+                    Write($"{DateTime.Now:HH:mm:ss} +{at,7:F1}s  report 0x{buffer[0]:X2} on {collection.DevicePath}: " +
+                          $"{Convert.ToHexString(buffer.AsSpan(0, count))}{(note is null ? string.Empty : "  " + note)}");
                 }
             }
             catch (OperationCanceledException)

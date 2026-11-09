@@ -44,7 +44,9 @@ public static class BuiltInDevices
             Name = "Logitech MX Master 3S",
             AdapterId = LogitechMxMaster3s.AdapterId,
             Kind = DeviceKind.Mouse,
-            Routes = LogitechMxMaster3s.Profile.Routes
+            Routes = LogitechMxMaster3s.Profile.Routes,
+            // Bluetooth and Bolt "disconnected" signals are not hardware-verified yet; the regular poll shows it Offline.
+            ShowsOfflineOnLinkLoss = false
         },
         new BuiltInDeviceDefinition
         {
@@ -52,7 +54,9 @@ public static class BuiltInDevices
             Name = "Logitech MX Keys Mechanical",
             AdapterId = LogitechMxKeysMechanical.AdapterId,
             Kind = DeviceKind.Keyboard,
-            Routes = LogitechMxKeysMechanical.Profile.Routes
+            Routes = LogitechMxKeysMechanical.Profile.Routes,
+            // Bluetooth and Bolt "disconnected" signals are not hardware-verified yet; the regular poll shows it Offline.
+            ShowsOfflineOnLinkLoss = false
         }
     ];
 

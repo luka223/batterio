@@ -116,6 +116,8 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
 
     public event EventHandler<DeviceCameOnlineEventArgs>? DeviceCameOnline;
 
+    public event EventHandler<DeviceWentOfflineEventArgs>? DeviceWentOffline;
+
     public Task StartAsync(CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -517,6 +519,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                     Device = definition,
                     IsPresent = true,
                     IsOnline = routes.Any(route => route.State == RouteState.Online),
+                    IsReportedOffline = routes.All(route => route.State == RouteState.Offline),
                     Error = null
                 };
                 routeSets[definition.Id] = routes;
@@ -556,6 +559,7 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
 
         DeviceDiscoverySnapshot? published = null;
         var cameOnline = new List<string>();
+        var wentOffline = new List<string>();
         lock (_gate)
         {
             var ordered = _catalog.Select(device => nextStates[device.Id]).ToArray();
@@ -574,6 +578,13 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
                 if (!previous.IsOnline && next.IsOnline)
                 {
                     cameOnline.Add(device.Id);
+                }
+
+                // IsReportedOffline alone does not republish the snapshot: consumers read CurrentSnapshot, which is updated below either
+                // way, and Online -> Offline already republishes through IsOnline.
+                if (!previous.IsReportedOffline && next.IsReportedOffline && device.ShowsOfflineOnLinkLoss)
+                {
+                    wentOffline.Add(device.Id);
                 }
             }
 
@@ -602,6 +613,11 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         foreach (var deviceId in cameOnline)
         {
             PublishCameOnline(deviceId);
+        }
+
+        foreach (var deviceId in wentOffline)
+        {
+            PublishWentOffline(deviceId);
         }
 
         return CurrentSnapshot;
@@ -647,6 +663,18 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         try
         {
             DeviceCameOnline?.Invoke(this, new DeviceCameOnlineEventArgs(deviceId));
+        }
+        catch (Exception exception)
+        {
+            _log.Log(BatterioLogLevel.Error, "A discovery listener failed.", exception);
+        }
+    }
+
+    private void PublishWentOffline(string deviceId)
+    {
+        try
+        {
+            DeviceWentOffline?.Invoke(this, new DeviceWentOfflineEventArgs(deviceId));
         }
         catch (Exception exception)
         {

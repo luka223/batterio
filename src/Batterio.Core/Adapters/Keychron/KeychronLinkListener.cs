@@ -11,6 +11,11 @@ namespace Batterio.Core;
 /// The route is <see cref="RouteState.Online"/> while reports arrive, <see cref="RouteState.Offline"/> after <see cref="SilenceTimeout"/>
 /// without one, and <see cref="RouteState.Unknown"/> before the first report and after the listener failed. The read loop reuses one
 /// buffer, so an arriving report costs a 33-byte copy and no allocation.
+/// Going Offline after the silence makes the keyboard show as Offline about 3 s later
+/// (<see cref="DeviceSelectionCoordinator.DefaultOfflineGrace"/>), about 9 s after its last report. <see cref="KeychronLinkRoute.CachedFrameMaxAge"/>
+/// must stay below <see cref="SilenceTimeout"/>, or a read after that mark could return a stale cached report.
+/// The idle report cadence has not been measured yet: run <c>HardwareSmokeTests.ListenForKeychronReports</c> and raise
+/// <see cref="SilenceTimeout"/> if the longest gap while awake comes close to it.
 /// </remarks>
 public sealed class KeychronLinkListener : IAsyncDisposable
 {

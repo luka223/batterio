@@ -104,6 +104,78 @@ public sealed class PollingCoordinator : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// What a later <see cref="MarkDeviceOffline"/> compares against: which worker polls the device and how many successful readings it
+    /// has stored so far. Null when the device is not being polled.
+    /// </summary>
+    public OfflineMarkToken? GetOfflineMarkToken(string deviceId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        lock (_gate)
+        {
+            return _workers.TryGetValue(deviceId, out var worker)
+                ? new OfflineMarkToken(worker.Identity, worker.SuccessCount)
+                : null;
+        }
+    }
+
+    /// <summary>
+    /// Shows the device as Offline without reading it, because its routes reported it gone. Every read in flight started before this and
+    /// its result is dropped; reads started afterwards are trusted as usual. Nothing happens when the device is not polled by the worker
+    /// named in <paramref name="token"/>, or when that worker stored a successful reading after the token was taken: a device that answered
+    /// is reachable, whatever its routes say. Returns whether the mark was applied.
+    /// </summary>
+    public bool MarkDeviceOffline(string deviceId, OfflineMarkToken token)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(deviceId);
+        PollingSnapshot? snapshot = null;
+        DeviceBatteryState? state = null;
+        bool answered;
+        lock (_gate)
+        {
+            ThrowIfStopped();
+            if (!_workers.TryGetValue(deviceId, out var worker) ||
+                worker.Identity != token.WorkerIdentity ||
+                !_states.TryGetValue(deviceId, out var current))
+            {
+                return false;
+            }
+
+            answered = worker.SuccessCount != token.SuccessCount;
+            if (!answered)
+            {
+                worker.OfflineMark++;
+                // Before the first success an error text is the only hint at a setup problem (for example a keyboard without the
+                // battery-monitor firmware is silent, which its listener also reports as gone), so it is kept, as in UpdateDeviceOffline.
+                var next = current with
+                {
+                    Reading = BatteryReading.Offline with { Reserve = current.Reading.Reserve },
+                    Error = worker.SuccessCount > 0 ? null : current.Error
+                };
+                if (!StateEquivalent(current, next))
+                {
+                    _states[deviceId] = next;
+                    snapshot = PublishSnapshotLocked();
+                    state = next;
+                }
+            }
+        }
+
+        if (answered)
+        {
+            _log.Log(BatterioLogLevel.Trace, $"Device '{deviceId}' answered after its routes reported it gone; not marked Offline.");
+            return false;
+        }
+
+        _log.Log(BatterioLogLevel.Information, $"Device '{deviceId}' was reported gone by its routes; shown as Offline.");
+        if (snapshot is not null && state is not null)
+        {
+            Publish(snapshot, new[] { state });
+        }
+
+        return true;
+    }
+
     public async Task StopAsync(TimeSpan? drainTimeout = null)
     {
         DeviceWorker[] workers;
@@ -372,10 +444,17 @@ public sealed class PollingCoordinator : IAsyncDisposable
     private async Task RunAttemptAsync(DeviceWorker worker)
     {
         var acquired = false;
+        long readMark = 0;
         try
         {
             await _globalConcurrency.WaitAsync(worker.Token).ConfigureAwait(false);
             acquired = true;
+
+            // Taken when the read begins: its result is trusted only if no Offline mark happened since (see MarkDeviceOffline).
+            lock (_gate)
+            {
+                readMark = worker.OfflineMark;
+            }
 
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(worker.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(worker.Device.TimeoutSeconds));
@@ -393,7 +472,7 @@ public sealed class PollingCoordinator : IAsyncDisposable
                     return;
                 }
 
-                UpdateFailure(worker, "The adapter timed out.");
+                UpdateFailure(worker, readMark, "The adapter timed out.");
                 _log.Log(BatterioLogLevel.Warning,
                     $"Adapter timed out for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').");
                 await AwaitAdapterAndReleaseAsync(adapterTask, acquired).ConfigureAwait(false);
@@ -408,7 +487,7 @@ public sealed class PollingCoordinator : IAsyncDisposable
             }
             catch (OperationCanceledException) when (!worker.Token.IsCancellationRequested)
             {
-                UpdateFailure(worker, "The adapter timed out.");
+                UpdateFailure(worker, readMark, "The adapter timed out.");
                 _log.Log(BatterioLogLevel.Warning,
                     $"Adapter timed out for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').");
                 return;
@@ -416,24 +495,38 @@ public sealed class PollingCoordinator : IAsyncDisposable
 
             if (reading is null)
             {
-                UpdateFailure(worker, "The adapter returned no battery reading.");
+                UpdateFailure(worker, readMark, "The adapter returned no battery reading.");
                 _log.Log(BatterioLogLevel.Error,
                     $"Adapter returned no battery reading for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').");
                 return;
             }
 
-            UpdateState(worker, state => state with
+            UpdateState(worker, readMark, state => state with
             {
                 Reading = reading,
                 Error = null
-            });
+            }, success: true);
         }
         catch (OperationCanceledException) when (worker.Token.IsCancellationRequested)
         {
         }
+        catch (BatteryAdapterException exception) when (exception.Kind == BatteryAdapterErrorKind.DeviceOffline)
+        {
+            if (UpdateDeviceOffline(worker, readMark, exception.Message))
+            {
+                _log.Log(BatterioLogLevel.Information,
+                    $"Device '{worker.Device.Id}' is offline (adapter '{worker.Device.AdapterId}'): {exception.Message}");
+            }
+            else
+            {
+                _log.Log(BatterioLogLevel.Error,
+                    $"Adapter failed for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').",
+                    exception);
+            }
+        }
         catch (Exception exception)
         {
-            UpdateFailure(worker, exception.Message);
+            UpdateFailure(worker, readMark, exception.Message);
             _log.Log(BatterioLogLevel.Error,
                 $"Adapter failed for device '{worker.Device.Id}' (adapter '{worker.Device.AdapterId}').",
                 exception);
@@ -469,14 +562,38 @@ public sealed class PollingCoordinator : IAsyncDisposable
         }
     }
 
-    private void UpdateFailure(DeviceWorker worker, string error) =>
-        UpdateState(worker, state => state with
+    private void UpdateFailure(DeviceWorker worker, long readMark, string error) =>
+        UpdateState(worker, readMark, state => state with
         {
             Reading = BatteryReading.Offline,
             Error = error
         });
 
-    private void UpdateState(DeviceWorker worker, Func<DeviceBatteryState, DeviceBatteryState> update)
+    /// <summary>
+    /// The adapter found the device unreachable (asleep, switched off). Once the device has been read successfully that is not an error:
+    /// it is stored like an Offline mark, keeping the reserve battery. Before the first success the message stays as the error text,
+    /// because then it is the only hint at a setup problem (for example a keyboard without the battery-monitor firmware).
+    /// Returns whether the plain Offline state was used.
+    /// </summary>
+    private bool UpdateDeviceOffline(DeviceWorker worker, long readMark, string error)
+    {
+        var plain = false;
+        UpdateState(worker, readMark, state =>
+        {
+            // Runs under _gate, where SuccessCount is written.
+            plain = worker.SuccessCount > 0;
+            return plain
+                ? state with { Reading = BatteryReading.Offline with { Reserve = state.Reading.Reserve }, Error = null }
+                : state with { Reading = BatteryReading.Offline, Error = error };
+        });
+        return plain;
+    }
+
+    private void UpdateState(
+        DeviceWorker worker,
+        long readMark,
+        Func<DeviceBatteryState, DeviceBatteryState> update,
+        bool success = false)
     {
         PollingSnapshot? snapshot = null;
         DeviceBatteryState? state = null;
@@ -489,20 +606,34 @@ public sealed class PollingCoordinator : IAsyncDisposable
                 return;
             }
 
-            var next = update(current);
-            if (StateEquivalent(current, next))
+            // A read that began before the device was marked Offline describes the past: its result (success or failure) is dropped.
+            if (worker.OfflineMark == readMark)
             {
-                state = current;
-            }
-            else
-            {
-                _states[worker.Device.Id] = next;
-                snapshot = PublishSnapshotLocked();
-                state = next;
+                if (success)
+                {
+                    // Counted even when the state is unchanged: the read proves the device answered (see MarkDeviceOffline).
+                    worker.SuccessCount++;
+                }
+
+                var next = update(current);
+                if (StateEquivalent(current, next))
+                {
+                    state = current;
+                }
+                else
+                {
+                    _states[worker.Device.Id] = next;
+                    snapshot = PublishSnapshotLocked();
+                    state = next;
+                }
             }
         }
 
-        if (snapshot is not null)
+        if (state is null)
+        {
+            _log.Log(BatterioLogLevel.Trace, $"Dropped a reading of device '{worker.Device.Id}' that started before it was marked Offline.");
+        }
+        else if (snapshot is not null)
         {
             Publish(snapshot, new[] { state });
         }
@@ -678,6 +809,12 @@ public sealed class PollingCoordinator : IAsyncDisposable
 
         public long Identity { get; }
 
+        /// <summary>Bumped by every Offline mark; only read and written under the coordinator's gate.</summary>
+        public long OfflineMark { get; set; }
+
+        /// <summary>Successful readings stored so far; only read and written under the coordinator's gate.</summary>
+        public long SuccessCount { get; set; }
+
         public CancellationToken Token => _cancellation.Token;
 
         public Task Completion => _loop ?? Task.CompletedTask;
@@ -811,3 +948,6 @@ public sealed class PollingCoordinator : IAsyncDisposable
             new(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 }
+
+/// <summary>Taken when a device's routes report it gone; see <see cref="PollingCoordinator.MarkDeviceOffline"/>.</summary>
+public readonly record struct OfflineMarkToken(long WorkerIdentity, long SuccessCount);

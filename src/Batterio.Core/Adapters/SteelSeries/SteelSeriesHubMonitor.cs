@@ -14,7 +14,8 @@ namespace Batterio.Core;
 /// page 0xFFC0 stays silent). Switching the headset off sends <c>07 B5 01 00 04</c> and <c>07 B7 00 64 01</c> at once, then
 /// <c>07 43</c>, <c>07 45</c> and <c>07 47</c> about 2.7 s later. Switching it on sends <c>07 B7 6x 64 08</c>, <c>07 80 03 0A 01 …</c>,
 /// <c>07 B5 01 00 08</c> and <c>07 19</c>, about 5 s after the button press (boot plus connecting to GameHub).
-/// Only the <c>B5</c> frame is used.
+/// Only the <c>B5</c> frame is used. A disconnect makes the headset's only route Offline, so the headset is shown as Offline about 3 s
+/// later (<see cref="DeviceSelectionCoordinator.DefaultOfflineGrace"/>) without any request, keeping the reserve battery of the base station.
 /// </remarks>
 public sealed class SteelSeriesHubMonitor(IHidCollectionProvider provider, IBatterioLog? log = null) : UsbEventStateMonitor(provider, log)
 {

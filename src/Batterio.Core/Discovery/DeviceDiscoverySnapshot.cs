@@ -12,6 +12,12 @@ public sealed record DeviceDiscoveryState
     /// </summary>
     public bool IsOnline { get; init; }
 
+    /// <summary>
+    /// The device has at least one route and every one of them reports it gone (switched off, asleep, disconnected). A route whose state
+    /// is unknown (a cable, a monitor that has not heard anything yet) keeps this false, so it is never inferred from <c>!IsOnline</c>.
+    /// </summary>
+    public bool IsReportedOffline { get; init; }
+
     public string? Error { get; init; }
 
     public string DeviceId => Device.Id;
@@ -43,6 +49,11 @@ public sealed class DeviceDiscoverySnapshotChangedEventArgs(DeviceDiscoverySnaps
 }
 
 public sealed class DeviceCameOnlineEventArgs(string deviceId) : EventArgs
+{
+    public string DeviceId { get; } = deviceId;
+}
+
+public sealed class DeviceWentOfflineEventArgs(string deviceId) : EventArgs
 {
     public string DeviceId { get; } = deviceId;
 }

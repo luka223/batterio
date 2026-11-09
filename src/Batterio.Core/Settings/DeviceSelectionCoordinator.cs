@@ -11,6 +11,8 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
     private readonly IBatterioLog _log;
     private readonly IDeviceRouteTable? _routes;
     private readonly RefreshCoalescer _immediateReads;
+    private readonly RefreshCoalescer _offlineMarks;
+    private readonly Dictionary<string, OfflineMarkToken> _offlineTokens = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _routeSets = new(StringComparer.OrdinalIgnoreCase);
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly object _stateGate = new();
@@ -23,6 +25,12 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
     private bool _stopped;
     private int _disposed;
 
+    /// <summary>
+    /// How long every route of a device must keep reporting it gone before it is shown as Offline, so a short radio dropout or an
+    /// off-then-on within a second does not flash Offline.
+    /// </summary>
+    public static readonly TimeSpan DefaultOfflineGrace = TimeSpan.FromSeconds(3);
+
     public DeviceSelectionCoordinator(
         IEnumerable<BuiltInDeviceDefinition> catalog,
         IUserSettingsStore settingsStore,
@@ -30,7 +38,8 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         PollingCoordinator polling,
         IBatterioLog? log = null,
         IDeviceRouteTable? routes = null,
-        TimeSpan? immediateReadWindow = null)
+        TimeSpan? immediateReadWindow = null,
+        TimeSpan? offlineGrace = null)
     {
         ArgumentNullException.ThrowIfNull(catalog);
         _settingsStore = settingsStore ?? throw new ArgumentNullException(nameof(settingsStore));
@@ -43,12 +52,18 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
             immediateReadWindow,
             onError: (deviceId, exception) =>
                 _log.Log(BatterioLogLevel.Warning, $"Reading device '{deviceId}' after its connection changed failed.", exception));
+        _offlineMarks = new RefreshCoalescer(
+            MarkIfStillOfflineAsync,
+            offlineGrace ?? DefaultOfflineGrace,
+            onError: (deviceId, exception) =>
+                _log.Log(BatterioLogLevel.Warning, $"Showing device '{deviceId}' as Offline failed.", exception));
         _catalog = catalog.Where(device => _discovery.CurrentSnapshot.Devices.Any(
             discovered => string.Equals(discovered.DeviceId, device.Id, StringComparison.OrdinalIgnoreCase))).ToArray();
         _discoverySnapshot = _discovery.CurrentSnapshot;
         _snapshot = CreateSnapshot(isLoading: true);
         _discovery.SnapshotChanged += OnDiscoverySnapshotChanged;
         _discovery.DeviceCameOnline += OnDeviceCameOnline;
+        _discovery.DeviceWentOffline += OnDeviceWentOffline;
         if (_routes is not null)
         {
             _routes.RoutesChanged += OnRoutesChanged;
@@ -185,12 +200,14 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
         {
             _discovery.SnapshotChanged -= OnDiscoverySnapshotChanged;
             _discovery.DeviceCameOnline -= OnDeviceCameOnline;
+            _discovery.DeviceWentOffline -= OnDeviceWentOffline;
             if (_routes is not null)
             {
                 _routes.RoutesChanged -= OnRoutesChanged;
             }
 
             _immediateReads.Dispose();
+            _offlineMarks.Dispose();
             await StopAsync().ConfigureAwait(false);
             _gate.Dispose();
         }
@@ -204,6 +221,67 @@ public sealed class DeviceSelectionCoordinator : IAsyncDisposable
     private void OnDeviceCameOnline(object? sender, DeviceCameOnlineEventArgs args)
     {
         _immediateReads.Request(args.DeviceId);
+    }
+
+    /// <summary>
+    /// Every route of a device reports it gone: show it as Offline after <see cref="DefaultOfflineGrace"/> if it is still gone then, without
+    /// sending it anything. The token is taken now, so a read that succeeds during the grace (the routes were wrong) cancels the mark; the
+    /// latest signal's token wins, so gone, answered, gone again still marks. A device that is not polled yet has nothing to mark: its
+    /// first read decides.
+    /// </summary>
+    private void OnDeviceWentOffline(object? sender, DeviceWentOfflineEventArgs args)
+    {
+        var token = _polling.GetOfflineMarkToken(args.DeviceId);
+        if (token is null)
+        {
+            return;
+        }
+
+        lock (_stateGate)
+        {
+            _offlineTokens[args.DeviceId] = token.Value;
+        }
+
+        _offlineMarks.Request(args.DeviceId);
+    }
+
+    private async Task MarkIfStillOfflineAsync(string deviceId)
+    {
+        try
+        {
+            OfflineMarkToken token;
+            lock (_stateGate)
+            {
+                if (!_offlineTokens.Remove(deviceId, out token))
+                {
+                    return;
+                }
+            }
+
+            await _gate.WaitAsync().ConfigureAwait(false);
+            bool stillGone;
+            try
+            {
+                // One snapshot, the current one, for both questions: is the device here, and is it still reported gone?
+                var device = _discovery.CurrentSnapshot.Devices.FirstOrDefault(state =>
+                    string.Equals(state.DeviceId, deviceId, StringComparison.OrdinalIgnoreCase));
+                stillGone = _started && !_stopped && _settings.IsDeviceSelected(deviceId) &&
+                            device is { IsPresent: true, IsReportedOffline: true };
+            }
+            finally
+            {
+                _gate.Release();
+            }
+
+            if (stillGone)
+            {
+                _polling.MarkDeviceOffline(deviceId, token);
+            }
+        }
+        catch (Exception exception) when (exception is ObjectDisposedException or OperationCanceledException)
+        {
+            // Shutting down.
+        }
     }
 
     /// <summary>

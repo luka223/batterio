@@ -10,6 +10,14 @@ public sealed class KeychronLinkListenerTests
     private const string LinkPath = @"\\?\hid#vid_3434&pid_d030&mi_03&col01#a&1";
 
     [Fact]
+    public void ACachedReportNeverOutlivesTheSilenceThatMarksTheKeyboardOffline()
+    {
+        // A read that starts after the keyboard was shown Offline must not be answered from a report older than that silence, or it
+        // would bring back a stale percentage. Keep this true when either value is tuned.
+        Assert.True(KeychronLinkRoute.CachedFrameMaxAge < KeychronLinkListener.SilenceTimeout);
+    }
+
+    [Fact]
     public async Task TheFirstReportMakesTheRouteOnlineAndRaisesAStateChange()
     {
         var hid = new PushProvider();

@@ -15,6 +15,9 @@ namespace Batterio.Core;
 /// established) followed by six <c>11 01 …</c> reports from the mouse. Layout, as in Solaar: <c>10 &lt;slot&gt; 41 &lt;protocol&gt;
 /// &lt;flags&gt; &lt;wpid low&gt; &lt;wpid high&gt;</c>; bit 0x40 of the flags is set while the link is down, and the wireless product ID is
 /// <c>0x40BD</c> for the Superstrike. Notices about other devices paired to the same receiver are ignored.
+/// A link-lost notice with no cable plugged in leaves only Offline routes, so the mouse is shown as Offline about 3 s later
+/// (<see cref="DeviceSelectionCoordinator.DefaultOfflineGrace"/>) without any request; on its cable it stays reachable and is not marked.
+/// If a read succeeds meanwhile (for example right after the cable is unplugged), the mark is skipped.
 /// </remarks>
 public sealed class LightspeedReceiverMonitor(IHidCollectionProvider provider, IBatterioLog? log = null) : UsbEventStateMonitor(provider, log)
 {
