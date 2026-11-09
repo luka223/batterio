@@ -105,12 +105,8 @@ public sealed class DeviceRouteResolver
 
     private RouteState UsbState(DeviceRouteKind kind, HidCollectionInfo endpoint)
     {
-        // A device on a cable is powered and enumerated, so it is awake.
-        if (kind == DeviceRouteKind.UsbCable)
-        {
-            return RouteState.Online;
-        }
-
+        // A cable route is not assumed to be online: a device that is also reachable through its receiver is normally read there, and the
+        // order of its routes (not the cable) decides which is tried first. The cable is still read if the receiver says the device is gone.
         foreach (var source in _usbSources)
         {
             if (source.GetState(endpoint) is RouteState state)

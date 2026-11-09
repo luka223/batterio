@@ -94,7 +94,10 @@ public sealed class DeviceDiscoveryService : IDeviceDiscoveryService
         }
 
         _resolver = new DeviceRouteResolver(_bolt, _bluetooth, _usbSources);
-        _queries = routes.SelectMany(DeviceRouteResolver.QueriesOf).Distinct().ToArray();
+        _queries = routes.SelectMany(DeviceRouteResolver.QueriesOf)
+            .Concat(_usbSources.SelectMany(source => source.Queries))
+            .Distinct()
+            .ToArray();
         _snapshot = new DeviceDiscoverySnapshot(0, OrderedStates());
     }
 

@@ -9,6 +9,12 @@ namespace Batterio.Core;
 /// </summary>
 public interface IUsbRouteStateSource
 {
+    /// <summary>
+    /// Extra HID collections the source listens to, beyond those of the device's routes. Discovery enumerates them with everything else
+    /// and hands them to <see cref="SyncAsync"/>; they never become routes.
+    /// </summary>
+    IReadOnlyCollection<HidCollectionQuery> Queries { get; }
+
     /// <summary>The state of the route over <paramref name="collection"/>, or null if this source knows nothing about it.</summary>
     RouteState? GetState(HidCollectionInfo collection);
 

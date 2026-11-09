@@ -3,8 +3,8 @@ using Batterio.Core.Abstractions;
 namespace Batterio.Core;
 
 /// <summary>
-/// Logitech G Pro X2 Superstrike: reached through its USB cable (product C0A8, preferred while it is plugged in to charge) or through
-/// its Lightspeed receiver (product C54D), both on HID++ interface 2.
+/// Logitech G Pro X2 Superstrike: reached through its Lightspeed receiver (product C54D, preferred: that is where the mouse is nearly
+/// always used) or through its USB cable (product C0A8, plugged in to charge), both on HID++ interface 2.
 /// </summary>
 public static class LogitechGProX2Superstrike
 {
@@ -43,11 +43,14 @@ public static class LogitechGProX2Superstrike
         RequiredReportId = 0x11
     };
 
-    /// <summary>The cable comes first: while it is plugged in the mouse is awake and charging, whatever the receiver reports.</summary>
+    /// <summary>
+    /// The receiver comes first. Only while the cable is plugged in (to charge) are there two routes; the cable is then tried first only if
+    /// the receiver reports the mouse as gone (a link-lost notice), and otherwise when the receiver does not answer.
+    /// </summary>
     public static IReadOnlyList<DeviceRouteDescriptor> Routes { get; } =
     [
-        new UsbHidRouteDescriptor(DeviceRouteKind.UsbCable, WiredQuery),
-        new UsbHidRouteDescriptor(DeviceRouteKind.UsbReceiver, ReceiverQuery)
+        new UsbHidRouteDescriptor(DeviceRouteKind.UsbReceiver, ReceiverQuery),
+        new UsbHidRouteDescriptor(DeviceRouteKind.UsbCable, WiredQuery)
     ];
 
     public static RoutedDeviceProfile Profile { get; } = new(

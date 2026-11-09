@@ -24,6 +24,9 @@ public sealed class KeychronLinkMonitor : IUsbRouteStateSource, IAsyncDisposable
 
     public event EventHandler? StateChanged;
 
+    /// <summary>The dongle's collection is the route's own, so nothing more is enumerated.</summary>
+    public IReadOnlyCollection<HidCollectionQuery> Queries => [];
+
     public RouteState? GetState(HidCollectionInfo collection)
     {
         ArgumentNullException.ThrowIfNull(collection);

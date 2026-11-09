@@ -44,7 +44,7 @@ public sealed class UsbRoutesTests
     }
 
     [Fact]
-    public async Task ACableRouteIsOnlineAndAnnouncesTheDeviceAsCameOnline()
+    public async Task ACableRouteComesAfterTheReceiverAndDoesNotCountAsOnlineByItself()
     {
         var hid = new ListProvider { Collections = [ReceiverCollection("receiver")] };
         var routes = new DeviceRouteTable();
@@ -52,16 +52,15 @@ public sealed class UsbRoutesTests
         var cameOnline = new List<string>();
         discovery.DeviceCameOnline += (_, e) => cameOnline.Add(e.DeviceId);
         await discovery.DiscoverAsync();
-        Assert.Empty(cameOnline);
 
-        hid.Collections = [ReceiverCollection("receiver"), CableCollection("cable")];
+        hid.Collections = [CableCollection("cable"), ReceiverCollection("receiver")];
         var snapshot = await discovery.DiscoverAsync();
 
-        Assert.Equal(new[] { SuperstrikeId }, cameOnline);
-        Assert.True(snapshot.Devices.Single().IsOnline);
+        Assert.Empty(cameOnline); // plugging the cable in is announced by the change of routes, not as a device coming online
+        Assert.False(snapshot.Devices.Single().IsOnline);
         var published = routes.GetRoutes(SuperstrikeId);
-        Assert.Equal(new[] { DeviceRouteKind.UsbCable, DeviceRouteKind.UsbReceiver }, published.Select(route => route.Kind));
-        Assert.Equal(new[] { RouteState.Online, RouteState.Unknown }, published.Select(route => route.State));
+        Assert.Equal(new[] { DeviceRouteKind.UsbReceiver, DeviceRouteKind.UsbCable }, published.Select(route => route.Kind));
+        Assert.All(published, route => Assert.Equal(RouteState.Unknown, route.State));
 
         // Unplugging the cable removes its route again.
         hid.Collections = [ReceiverCollection("receiver")];
@@ -109,7 +108,7 @@ public sealed class UsbRoutesTests
         await using var rig = await Rig.StartAsync([ReceiverCollection("receiver")]);
         await rig.WaitForReads(1);
 
-        // Two things announce the plug-in (the routes changed, the cable is online); together they cost one read.
+        // The change of routes announces the plug-in; it costs one read.
         rig.Hid.Collections = [ReceiverCollection("receiver"), CableCollection("cable")];
         await rig.Selection.RefreshDiscoveryAsync();
         await rig.WaitForReads(2);
@@ -248,9 +247,12 @@ public sealed class UsbRoutesTests
             ValueTask.FromException<IHidReportTransport>(new InvalidOperationException("The tests never open HID transports."));
     }
 
-    private sealed class FakeStateSource(RouteState? state) : IUsbRouteStateSource
+    /// <summary>A source that reports <paramref name="state"/> for the collections <paramref name="appliesTo"/> accepts (all if null).</summary>
+    internal sealed class FakeStateSource(RouteState? state, Func<HidCollectionInfo, bool>? appliesTo = null) : IUsbRouteStateSource
     {
         public RouteState? State { get; set; } = state;
+
+        public IReadOnlyCollection<HidCollectionQuery> Queries => [];
 
         public event EventHandler? StateChanged
         {
@@ -258,7 +260,7 @@ public sealed class UsbRoutesTests
             remove { }
         }
 
-        public RouteState? GetState(HidCollectionInfo collection) => State;
+        public RouteState? GetState(HidCollectionInfo collection) => appliesTo is null || appliesTo(collection) ? State : null;
 
         public Task SyncAsync(IReadOnlyList<HidCollectionInfo> collections, CancellationToken cancellationToken = default) => Task.CompletedTask;
     }

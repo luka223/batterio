@@ -7,8 +7,10 @@ namespace Batterio.Core;
 /// together with the one in the headset (<see cref="BuiltInDeviceDefinition.HasReserveBattery"/>).
 /// </summary>
 /// <remarks>
-/// Hardware findings on wake-ups: none recorded yet. The hub is reacted to when it is plugged in or removed; a headset waking up is
-/// noticed at the next poll, when the popup opens, or on Refresh.
+/// Hardware findings on wake-ups (2026-11-09, listen-only captures while the headset was switched off and on, hub staying connected):
+/// the status collection (interface 3, usage page 0xFFC0) sends no frame at all, but the hub's other collection on that interface (usage
+/// page 0xFF00) announces a headset connecting or disconnecting with a <c>07 B5</c> event, which <see cref="SteelSeriesHubMonitor"/>
+/// listens to. See there for the frames. The event follows the button press by about 5 s (boot plus connecting to GameHub).
 /// </remarks>
 public static class SteelSeriesArctisNovaProOmni
 {
@@ -29,6 +31,19 @@ public static class SteelSeriesArctisNovaProOmni
         Usage = 0x0001,
         RequiredReportId = 0x01,
         MinimumReportLength = 64
+    };
+
+    /// <summary>
+    /// The hub's second collection on interface 3 (usage page 0xFF00, 64-byte reports), where it announces the headset connecting and
+    /// disconnecting. It is only listened to, never a route.
+    /// </summary>
+    public static readonly HidCollectionQuery EventsQuery = new()
+    {
+        VendorId = VendorId,
+        ProductId = NovaProOmniProductId,
+        InterfaceNumber = 3,
+        UsagePage = 0xFF00,
+        Usage = 0x0001
     };
 
     public static IReadOnlyList<DeviceRouteDescriptor> Routes { get; } =

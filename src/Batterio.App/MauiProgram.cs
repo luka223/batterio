@@ -41,6 +41,12 @@ public static class MauiProgram
         builder.Services.AddSingleton(services => new KeychronLinkMonitor(
             services.GetRequiredService<IHidCollectionProvider>(),
             services.GetRequiredService<IBatterioLog>()));
+        builder.Services.AddSingleton(services => new LightspeedReceiverMonitor(
+            services.GetRequiredService<IHidCollectionProvider>(),
+            services.GetRequiredService<IBatterioLog>()));
+        builder.Services.AddSingleton(services => new SteelSeriesHubMonitor(
+            services.GetRequiredService<IHidCollectionProvider>(),
+            services.GetRequiredService<IBatterioLog>()));
         foreach (var profile in BuiltInDevices.Profiles)
         {
             builder.Services.AddSingleton<IBatteryAdapterFactory>(services => new RoutedAdapterFactory(
@@ -65,7 +71,12 @@ public static class MauiProgram
             services.GetRequiredService<LogiBoltReceiverManager>(),
             services.GetRequiredService<IDeviceChangeNotifier>(),
             services.GetRequiredService<IBluetoothConnectionMonitor>(),
-            usbSources: [services.GetRequiredService<KeychronLinkMonitor>()]));
+            usbSources:
+            [
+                services.GetRequiredService<KeychronLinkMonitor>(),
+                services.GetRequiredService<SteelSeriesHubMonitor>(),
+                services.GetRequiredService<LightspeedReceiverMonitor>()
+            ]));
         builder.Services.AddSingleton<PollingCoordinator>();
         builder.Services.AddSingleton(WindowsToastActivation.Current);
         builder.Services.AddSingleton<IWindowsToastPlatform, WindowsToastPlatform>();

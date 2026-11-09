@@ -122,7 +122,7 @@ public sealed class AdapterRegressionTests
     }
 
     [Fact]
-    public async Task WiredMouseTakesPriorityWhenReceiverIsAlsoPresent()
+    public async Task ReceiverTakesPriorityWhenWiredMouseIsAlsoPresent()
     {
         var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
         {
@@ -132,8 +132,8 @@ public sealed class AdapterRegressionTests
 
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
 
-        Assert.Equal("wired", provider.Sessions.Single().Collection.DevicePath);
-        Assert.All(provider.Writes, request => Assert.Equal(0xFF, request[1]));
+        Assert.Equal("mouse", provider.Sessions.Single().Collection.DevicePath);
+        Assert.All(provider.Writes, request => Assert.Equal(1, request[1]));
     }
 
     [Theory]
@@ -178,29 +178,29 @@ public sealed class AdapterRegressionTests
     }
 
     [Fact]
-    public async Task TheCableIsReadBeforeTheReceiverAndTheReceiverOnceTheCableIsGone()
+    public async Task TheReceiverIsReadBeforeTheCableAndTheCableOnceTheReceiverIsGone()
     {
         var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
         {
             Collections = new[] { Mouse(), WiredMouse() }
         };
         var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider);
-        Assert.Equal(new[] { DeviceRouteKind.UsbCable, DeviceRouteKind.UsbReceiver }, harness.Routes.Select(route => route.Kind));
-        Assert.Equal(new[] { RouteState.Online, RouteState.Unknown }, harness.Routes.Select(route => route.State));
+        Assert.Equal(new[] { DeviceRouteKind.UsbReceiver, DeviceRouteKind.UsbCable }, harness.Routes.Select(route => route.Kind));
+        Assert.All(harness.Routes, route => Assert.Equal(RouteState.Unknown, route.State));
         await using var adapter = harness.CreateAdapter();
 
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
-        Assert.Equal("wired", Assert.Single(provider.Sessions).Collection.DevicePath);
+        Assert.Equal("mouse", Assert.Single(provider.Sessions).Collection.DevicePath);
 
-        // The cable is unplugged: discovery removes its route and the receiver is read next.
-        provider.Collections = new[] { Mouse() };
+        // The receiver is unplugged: discovery removes its route and the cable is read next.
+        provider.Collections = new[] { WiredMouse() };
         harness.Resolve();
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
-        Assert.Equal("mouse", provider.Sessions.Last().Collection.DevicePath);
+        Assert.Equal("wired", provider.Sessions.Last().Collection.DevicePath);
     }
 
     [Fact]
-    public async Task PluggingInTheCableMakesItTheFirstChoiceAgainAfterTheReceiverWorked()
+    public async Task PluggingInTheCableToChargeDoesNotMoveTheReadAwayFromTheReceiver()
     {
         var provider = new ScriptProvider(Mouse(), request => MouseReply(request));
         var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider);
@@ -212,22 +212,40 @@ public sealed class AdapterRegressionTests
         harness.Resolve();
 
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
-        Assert.Equal("wired", provider.Sessions.Last().Collection.DevicePath);
+        Assert.Equal("mouse", provider.Sessions.Last().Collection.DevicePath);
     }
 
     [Fact]
-    public async Task AStaleCablePathFallsThroughToTheReceiverInTheSamePoll()
+    public async Task TheCableIsReadFirstWhenTheReceiverSaysTheMouseIsGone()
+    {
+        // The mouse switches to its cable to charge: the receiver announces that the wireless link was lost.
+        var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
+        {
+            Collections = new[] { Mouse(), WiredMouse() }
+        };
+        var linkLost = new UsbRoutesTests.FakeStateSource(RouteState.Offline, LogitechGProX2Superstrike.ReceiverQuery.Matches);
+        var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider, usbSources: [linkLost]);
+        Assert.Equal(new[] { RouteState.Offline, RouteState.Unknown }, harness.Routes.Select(route => route.State));
+        await using var adapter = harness.CreateAdapter();
+
+        Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
+
+        Assert.Equal("wired", Assert.Single(provider.Sessions).Collection.DevicePath);
+    }
+
+    [Fact]
+    public async Task AReceiverThatCannotBeOpenedFallsThroughToTheCableInTheSamePoll()
     {
         var provider = new ScriptProvider(Mouse(), request => MouseReply(request))
         {
             Collections = new[] { Mouse(), WiredMouse() },
-            FailOpen = path => path == "wired"
+            FailOpen = path => path == "mouse"
         };
         var harness = new RouteHarness(LogitechGProX2Superstrike.Profile, provider);
         await using var adapter = harness.CreateAdapter();
 
         Assert.Equal(15, (await adapter.GetBatteryStatus()).Percentage);
-        Assert.Equal("mouse", Assert.Single(provider.Sessions).Collection.DevicePath);
+        Assert.Equal("wired", Assert.Single(provider.Sessions).Collection.DevicePath);
     }
 
     [Fact]

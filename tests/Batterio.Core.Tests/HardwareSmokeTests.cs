@@ -264,50 +264,86 @@ public sealed class HardwareSmokeTests(Xunit.Abstractions.ITestOutputHelper outp
         LogitechGProX2Superstrike.ReceiverQuery,
         LogitechGProX2Superstrike.ReceiverQuery with { MinimumReportLength = 7, RequiredReportId = 0x10 });
 
+    // The receiver also exposes the mouse and keyboard interfaces, which carry movement and key presses; those are never opened. Only
+    // the vendor-defined collections (usage page 0xFF00 and above, where the HID++ traffic and connection notices travel) are listened to.
+    [HardwareFact]
+    public Task ListenForUnsolicitedFramesOnEverySuperstrikeReceiverCollection() => ListenAsync(
+        [new HidCollectionQuery { VendorId = LogitechGProX2Superstrike.VendorId, ProductId = LogitechGProX2Superstrike.ReceiverProductId }],
+        collection => collection.UsagePage >= 0xFF00);
+
     [HardwareFact]
     public Task ListenForUnsolicitedFramesOnTheLightspeedHeadsetReceiver() => ListenAsync(LogitechGProX2Lightspeed.LightspeedQuery);
 
     [HardwareFact]
     public Task ListenForUnsolicitedFramesOnTheOmniHub() => ListenAsync(SteelSeriesArctisNovaProOmni.NovaProOmniQuery);
 
-    private async Task ListenAsync(params HidCollectionQuery[] queries)
+    // The hub also exposes other collections (vendor 0xFF00 and the ordinary HID ones); some may refuse to be opened, which is logged and skipped.
+    [HardwareFact]
+    public Task ListenForUnsolicitedFramesOnEveryOmniHubCollection() => ListenAsync(
+        new HidCollectionQuery { VendorId = SteelSeriesArctisNovaProOmni.VendorId, ProductId = SteelSeriesArctisNovaProOmni.NovaProOmniProductId });
+
+    private Task ListenAsync(params HidCollectionQuery[] queries) => ListenAsync(queries, null);
+
+    private async Task ListenAsync(HidCollectionQuery[] queries, Func<HidCollectionInfo, bool>? filter)
     {
         var seconds = int.TryParse(Environment.GetEnvironmentVariable("BATTERIO_LISTEN_SECONDS"), out var configured) ? configured : 60;
+
+        // dotnet test shows a test's output only when the test ends, so stopping it early would lose everything. When BATTERIO_LISTEN_LOG
+        // names a file, every line is also appended to it as it happens (watch it live, or read it after Ctrl+C).
+        var logFile = Environment.GetEnvironmentVariable("BATTERIO_LISTEN_LOG");
+        var logGate = new object();
+        void Write(string line)
+        {
+            lock (logGate)
+            {
+                output.WriteLine(line);
+                if (!string.IsNullOrWhiteSpace(logFile))
+                {
+                    File.AppendAllText(logFile, line + Environment.NewLine);
+                }
+            }
+        }
+
         var provider = new WindowsHidCollectionProvider();
         var collections = queries
             .SelectMany(query => provider.Enumerate(query).Where(query.Matches))
+            .Where(collection => filter is null || filter(collection))
             .DistinctBy(collection => collection.DevicePath, StringComparer.OrdinalIgnoreCase)
             .ToArray();
         Assert.NotEmpty(collections);
-        output.WriteLine($"Listening for {seconds} s on {collections.Length} collection(s); trigger the events you want to observe now.");
+        Write($"Listening for {seconds} s on {collections.Length} collection(s) from {DateTime.Now:HH:mm:ss}; trigger the events you want to observe now.");
 
         var started = System.Diagnostics.Stopwatch.GetTimestamp();
         var frames = 0;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(seconds));
         var listeners = collections.Select(async collection =>
         {
-            await using var transport = await provider.OpenAsync(collection, deadline.Token);
-            await using var transaction = await transport.BeginTransactionAsync(deadline.Token);
-            var buffer = new byte[Math.Max(collection.InputReportLength, 64)];
             try
             {
+                await using var transport = await provider.OpenAsync(collection, deadline.Token);
+                await using var transaction = await transport.BeginTransactionAsync(deadline.Token);
+                var buffer = new byte[Math.Max(collection.InputReportLength, 64)];
+                Write($"listening on {collection.DevicePath} (interface {collection.InterfaceNumber}, usage page 0x{collection.UsagePage:X4}, usage 0x{collection.Usage:X4}, in {collection.InputReportLength})");
                 while (true)
                 {
                     var count = await transaction.ReadAsync(buffer, deadline.Token);
                     var at = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds;
                     Interlocked.Increment(ref frames);
-                    lock (output)
                     {
-                        output.WriteLine($"+{at,7:F1}s  report 0x{buffer[0]:X2} on {collection.DevicePath}: {Convert.ToHexString(buffer.AsSpan(0, count))}");
+                        Write($"{DateTime.Now:HH:mm:ss} +{at,7:F1}s  report 0x{buffer[0]:X2} on {collection.DevicePath}: {Convert.ToHexString(buffer.AsSpan(0, count))}");
                     }
                 }
             }
             catch (OperationCanceledException)
             {
             }
+            catch (Exception exception)
+            {
+                Write($"stopped listening on {collection.DevicePath}: {exception.Message}");
+            }
         }).ToArray();
         await Task.WhenAll(listeners);
-        output.WriteLine($"{Volatile.Read(ref frames)} frame(s) arrived without a request.");
+        Write($"{Volatile.Read(ref frames)} frame(s) arrived without a request.");
     }
 
     private sealed class TestLog(Xunit.Abstractions.ITestOutputHelper output) : IBatterioLog

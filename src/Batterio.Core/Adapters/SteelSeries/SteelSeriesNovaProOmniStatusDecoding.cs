@@ -9,6 +9,13 @@ public static class SteelSeriesNovaProOmniStatusDecoding
     public const byte StatusOpcode = 0xB0;
     public const byte EventPrefix = 0x07;
 
+    /// <summary>Unsolicited <c>07 B5</c> event the hub sends when the headset connects or disconnects (seen on hardware).</summary>
+    public const byte ConnectionEventOpcode = 0xB5;
+
+    public const int ConnectionEventStateOffset = 0x04;
+    public const byte ConnectionEventDisconnected = 0x04;
+    public const byte ConnectionEventConnected = LinkConnected;
+
     public const int HeadsetBatteryOffset = 0x06;
     public const int ReserveBatteryOffset = 0x07;
     public const int LinkOffset = 0x0E;
@@ -23,6 +30,30 @@ public static class SteelSeriesNovaProOmniStatusDecoding
 
     /// <summary>Shortest frame that still contains every field the decoder reads.</summary>
     public const int MinimumReplyLength = 0x11;
+
+    /// <summary>
+    /// Decodes the headset connection event: <c>07 B5 01 00 08</c> when the headset connected, <c>07 B5 01 00 04</c> when it disconnected.
+    /// Any other frame (and any other state value) is not a connection event.
+    /// </summary>
+    public static bool TryDecodeConnectionEvent(ReadOnlySpan<byte> frame, out bool connected)
+    {
+        connected = false;
+        if (frame.Length <= ConnectionEventStateOffset || frame[0] != EventPrefix || frame[1] != ConnectionEventOpcode)
+        {
+            return false;
+        }
+
+        switch (frame[ConnectionEventStateOffset])
+        {
+            case ConnectionEventConnected:
+                connected = true;
+                return true;
+            case ConnectionEventDisconnected:
+                return true;
+            default:
+                return false;
+        }
+    }
 
     public static byte[] CreateStatusRequest(int outputReportLength)
     {

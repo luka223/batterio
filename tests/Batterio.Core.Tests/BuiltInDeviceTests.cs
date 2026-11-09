@@ -7,11 +7,11 @@ namespace Batterio.Core.Tests;
 public sealed class BuiltInDeviceTests
 {
     [Fact]
-    public void SuperstrikeRoutesPreferTheCableAndTheOtherUsbDevicesHaveOneReceiverRoute()
+    public void SuperstrikeRoutesPreferTheReceiverAndTheOtherUsbDevicesHaveOneReceiverRoute()
     {
         var superstrike = BuiltInDevices.Catalog.Single(device => device.Id == "logitech-g-pro-x2-superstrike");
-        var cable = Assert.IsType<UsbHidRouteDescriptor>(superstrike.Routes[0]);
-        var receiver = Assert.IsType<UsbHidRouteDescriptor>(superstrike.Routes[1]);
+        var receiver = Assert.IsType<UsbHidRouteDescriptor>(superstrike.Routes[0]);
+        var cable = Assert.IsType<UsbHidRouteDescriptor>(superstrike.Routes[1]);
         var lightspeed = BuiltInDevices.Catalog.Single(device => device.Id == "logitech-g-pro-x2-lightspeed");
 
         Assert.Equal(2, superstrike.Routes.Count);
