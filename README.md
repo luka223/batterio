@@ -1,4 +1,11 @@
-# Batterio
+<p>
+  <img src="https://img.shields.io/badge/Windows%2011-x64%20only-0078D4?logo=windows11&logoColor=white" alt="Windows 11 only">
+</p>
+
+<h1>
+  <img src="src/Batterio.App/Resources/AppIcon/appicon.svg" alt="Batterio icon" width="40" height="40" align="absmiddle">
+  Batterio
+</h1>
 
 A Windows 11 x64 system tray app that shows the battery level of wireless gaming peripherals.
 
