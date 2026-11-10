@@ -116,7 +116,10 @@ Settings and device selections are kept, since they live in `%LocalAppData%\Batt
 
 For the folder build, close Batterio and replace the whole folder with the new one; do not mix files from different versions.
 
-To release a new version, bump `<Version>` in `Directory.Build.props`, run the single-file publish script, and attach the resulting `Batterio.exe` to a GitHub release whose tag is the version (for example `1.2.0`). Running copies only see published releases; drafts and prereleases are ignored.
+To release a new version, bump `<Version>` in `Directory.Build.props`.
+There is GitHub Actions pipeline that checks if version in `Directory.Build.props` is newer than the latest release and automatically publishes new release.
+
+For manual release, run the single-file publish script, and attach the resulting `Batterio.exe` to a GitHub release whose tag is the version (for example `1.2.0`). Running copies only see published releases; drafts and prereleases are ignored.
 
 ## Data and diagnostics
 
